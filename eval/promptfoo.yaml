@@ -1,0 +1,8 @@
+description: literature-report-agent
+providers:
+  - id: local
+tests:
+  - description: placeholder
+    vars:
+      arxiv_url_or_id: https://arxiv.org/abs/1706.03762
+
