@@ -16,6 +16,9 @@ dependencies = [
   "feedparser>=6.0.0",
   "pypdf>=4.0.0",
   "python-multipart>=0.0.20",
+  "sentence-transformers>=3.0.0",
+  "faiss-cpu>=1.7.0",
+  "numpy>=1.26.0",
 ]
 
 [tool.uvicorn]

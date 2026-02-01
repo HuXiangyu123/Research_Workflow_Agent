@@ -1,2 +1,1 @@
-{"id":"arxiv_basic","input":{"arxiv_url_or_id":"https://arxiv.org/abs/1706.03762"}}
-
+{"input": "https://arxiv.org/abs/1706.03762", "must_include": ["Attention", "Transformer", "Vaswani"], "min_citations": 3}

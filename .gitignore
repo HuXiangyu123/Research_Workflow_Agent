@@ -3,6 +3,15 @@
 !.env.example
 
 output/
+data/
+!data/seeds/seed.jsonl
+!data/seeds/*.jsonl
+
+# RAG specific ignores just in case user changes structure
+data/corpus/
+data/indexes/
+data/metadata/*.sqlite
+data/logs/
 
 __pycache__/
 *.py[cod]
