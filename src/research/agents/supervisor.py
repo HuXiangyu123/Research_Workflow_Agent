@@ -4,20 +4,28 @@ The current research workflow truth lives in the canonical 7-node graph:
 
     clarify -> search_plan -> search -> extract -> draft -> review -> persist_artifacts
 
-This supervisor keeps the legacy/v2 backend switching, but it also:
+This supervisor provides:
 - normalizes old Phase 4 node aliases to the current graph node names
 - resumes from the right stage based on the current shared task state
-- records lightweight handoff traces so agent collaboration is inspectable
+- records lightweight collaboration traces so agent execution is inspectable
 """
 
 from __future__ import annotations
 
 import importlib
 import logging
-from typing import Any
+from typing import Any, TypedDict
 
-from src.models.agent import AgentRole
-from src.models.config import AgentParadigm, ExecutionMode, NodeBackendMode, Phase4Config
+from langgraph.graph import END, START, StateGraph
+
+from src.agent.checkpointing import build_graph_config, get_langgraph_checkpointer
+from src.models.config import (
+    AgentParadigm,
+    ExecutionMode,
+    NodeBackendMode,
+    Phase4Config,
+    SupervisorMode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +47,6 @@ LEGACY_NODE_ALIASES: dict[str, str] = {
     "synthesize": "draft",
     "write_report": "draft",
     "revise": "review",
-}
-
-ROLE_DEFAULT_NODES: dict[AgentRole, str] = {
-    AgentRole.PLANNER: "search_plan",
-    AgentRole.RETRIEVER: "search",
-    AgentRole.ANALYST: "draft",
-    AgentRole.REVIEWER: "review",
 }
 
 LEGACY_NODE_TARGETS: dict[str, tuple[str, str]] = {
@@ -81,12 +82,36 @@ V2_AGENT_TARGETS: dict[str, dict[str, str]] = {
     },
 }
 
+RESULT_STATE_KEYS: tuple[str, ...] = (
+    "brief",
+    "search_plan",
+    "rag_result",
+    "paper_cards",
+    "draft_report",
+    "draft_markdown",
+    "review_feedback",
+    "review_passed",
+    "result_markdown",
+    "resolved_report",
+    "verified_report",
+    "final_report",
+)
+
 
 class NodeBackend:
     """节点后端接口（Protocol），legacy 和 v2 都实现此接口。"""
 
     async def run(self, state: dict, inputs: dict) -> dict:
         raise NotImplementedError
+
+
+class SupervisorGraphState(TypedDict, total=False):
+    workflow_state: dict[str, Any]
+    canonical_start: str
+    stop_at: str | None
+    collaboration_trace: list[dict[str, Any]]
+    last_node: str | None
+    supervisor_result: dict[str, Any]
 
 
 class AgentSupervisor:
@@ -170,7 +195,7 @@ class AgentSupervisor:
         result.setdefault("_agent_paradigm", "legacy" if backend_mode == NodeBackendMode.LEGACY else "unknown")
         return result
 
-    async def _run_legacy(self, node_name: str, state: dict, inputs: dict) -> dict:
+    async def _run_legacy(self, node_name: str, state: dict, inputs: dict | None) -> dict:
         backend = self._node_backends.get(node_name)
         if backend:
             return await backend.run(state, inputs)
@@ -178,7 +203,7 @@ class AgentSupervisor:
         logger.info("[AgentSupervisor] legacy backend for %s", node_name)
         return await self._call_legacy_node(node_name, state)
 
-    async def _run_v2(self, node_name: str, state: dict, inputs: dict) -> dict:
+    async def _run_v2(self, node_name: str, state: dict, inputs: dict | None) -> dict:
         backend = self._node_backends.get(node_name)
         if backend:
             return await backend.run(state, inputs)
@@ -287,6 +312,29 @@ class AgentSupervisor:
             f"Backends: {backend_path}."
         )
 
+    def build_graph(self):
+        """Build the LangGraph supervisor workflow around canonical research nodes."""
+        workflow = StateGraph(SupervisorGraphState)
+        workflow.add_node("prepare", self._prepare_collaboration_node)
+        for node_name in CANONICAL_NODE_ORDER:
+            workflow.add_node(node_name, self._make_collaboration_node(node_name))
+        workflow.add_node("finalize", self._finalize_collaboration_node)
+
+        workflow.add_edge(START, "prepare")
+        workflow.add_conditional_edges(
+            "prepare",
+            self._route_from_prepare,
+            {**{name: name for name in CANONICAL_NODE_ORDER}, "finalize": "finalize"},
+        )
+        for node_name in CANONICAL_NODE_ORDER:
+            workflow.add_conditional_edges(
+                node_name,
+                self._make_route_after_node(node_name),
+                {**{name: name for name in CANONICAL_NODE_ORDER}, "finalize": "finalize"},
+            )
+        workflow.add_edge("finalize", END)
+        return workflow.compile(checkpointer=get_langgraph_checkpointer("agent_supervisor"))
+
     async def collaborate(
         self,
         state: dict,
@@ -303,59 +351,82 @@ class AgentSupervisor:
         stop_at = self.normalize_node_name(stop_after) if stop_after else None
         if stop_at and stop_at not in CANONICAL_NODE_ORDER:
             stop_at = None
-        payload = inputs or {}
 
-        collaboration_trace: list[dict[str, Any]] = []
-        for node_name in workflow:
-            result = await self.run_node(node_name, state, payload)
-            self._merge_state(state, result)
-            collaboration_trace.append(self._build_trace_entry(node_name, result))
+        result = await self.build_graph().ainvoke(
+            {
+                "workflow_state": dict(state),
+                "canonical_start": canonical_start,
+                "stop_at": stop_at,
+                "collaboration_trace": [],
+                "last_node": None,
+            },
+            config=build_graph_config(
+                "agent_supervisor",
+                recursion_limit=len(workflow) * 3 + 8,
+            ),
+        )
+        return result.get("supervisor_result") or {}
 
-            if stop_at and node_name == stop_at:
-                break
-            if self._should_stop_after(node_name, state):
-                break
-
-        summary = self._summarize_trace(canonical_start, collaboration_trace)
+    def _prepare_collaboration_node(self, state: SupervisorGraphState) -> dict[str, Any]:
+        workflow_state = dict(state.get("workflow_state") or {})
         return {
-            "current_stage": state.get("current_stage", collaboration_trace[-1]["node"] if collaboration_trace else canonical_start),
+            "workflow_state": workflow_state,
+            "collaboration_trace": list(state.get("collaboration_trace", [])),
+        }
+
+    def _route_from_prepare(self, state: SupervisorGraphState) -> str:
+        canonical_start = state.get("canonical_start") or "search_plan"
+        return canonical_start if canonical_start in CANONICAL_NODE_ORDER else "finalize"
+
+    def _make_collaboration_node(self, node_name: str):
+        async def _node(state: SupervisorGraphState) -> dict[str, Any]:
+            workflow_state = dict(state.get("workflow_state") or {})
+            result = await self.run_node(node_name, workflow_state, None)
+            self._merge_state(workflow_state, result)
+            trace = list(state.get("collaboration_trace", []))
+            trace.append(self._build_trace_entry(node_name, result))
+            return {
+                "workflow_state": workflow_state,
+                "collaboration_trace": trace,
+                "last_node": node_name,
+            }
+
+        return _node
+
+    def _make_route_after_node(self, node_name: str):
+        def _route(state: SupervisorGraphState) -> str:
+            stop_at = state.get("stop_at")
+            workflow_state = state.get("workflow_state") or {}
+            if stop_at and node_name == stop_at:
+                return "finalize"
+            if self._should_stop_after(node_name, workflow_state):
+                return "finalize"
+            current_idx = CANONICAL_NODE_ORDER.index(node_name)
+            next_idx = current_idx + 1
+            if next_idx >= len(CANONICAL_NODE_ORDER):
+                return "finalize"
+            return CANONICAL_NODE_ORDER[next_idx]
+
+        return _route
+
+    def _finalize_collaboration_node(self, state: SupervisorGraphState) -> dict[str, Any]:
+        workflow_state = dict(state.get("workflow_state") or {})
+        collaboration_trace = list(state.get("collaboration_trace", []))
+        canonical_start = state.get("canonical_start") or "search_plan"
+        summary = self._summarize_trace(canonical_start, collaboration_trace)
+        supervisor_result = {
+            "current_stage": workflow_state.get(
+                "current_stage",
+                collaboration_trace[-1]["node"] if collaboration_trace else canonical_start,
+            ),
             "trace_refs": [entry["node"] for entry in collaboration_trace],
             "collaboration_trace": collaboration_trace,
             "summary": summary,
-            **{
-                key: state.get(key)
-                for key in (
-                    "brief",
-                    "search_plan",
-                    "rag_result",
-                    "paper_cards",
-                    "draft_report",
-                    "draft_markdown",
-                    "review_feedback",
-                    "review_passed",
-                    "result_markdown",
-                    "resolved_report",
-                    "verified_report",
-                    "final_report",
-                )
-                if key in state
-            },
+            "supervisor_mode": SupervisorMode.GRAPH.value,
+            **{key: workflow_state.get(key) for key in RESULT_STATE_KEYS if key in workflow_state},
         }
+        return {"supervisor_result": supervisor_result}
 
-    async def dispatch(
-        self,
-        role: AgentRole,
-        state: dict,
-        inputs: dict,
-    ) -> dict:
-        """Dispatch by role using canonical node names."""
-        if role == AgentRole.SUPERVISOR:
-            return await self.collaborate(state, inputs=inputs)
-
-        node_name = ROLE_DEFAULT_NODES.get(role, "search_plan")
-        result = await self.run_node(node_name, state, inputs)
-        result.setdefault("summary", f"Dispatched to {node_name} ({result.get('_agent_paradigm', 'legacy')})")
-        return result
 
     def _prune_state_for_stage(self, state: dict, target_stage: str) -> dict:
         canonical = self.normalize_node_name(target_stage)
