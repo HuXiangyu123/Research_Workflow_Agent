@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { SourceType, Task } from '../types/task';
+import type { ResearchBrief, SearchPlan, SearchQueryGroup, SourceType, Task } from '../types/task';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ResearchFollowupForm } from './ResearchFollowupForm';
 
@@ -8,22 +8,6 @@ interface Props {
   isDone: boolean;
   sourceType?: SourceType | null;
   onTaskCreated: (taskId: string, sourceType: SourceType) => void;
-}
-
-interface JsonSectionProps {
-  title: string;
-  data: unknown;
-}
-
-function JsonSection({ title, data }: JsonSectionProps) {
-  return (
-    <section className="mb-5 rounded-xl border border-stone-200 bg-stone-50 p-4">
-      <h3 className="mb-3 text-sm font-semibold text-stone-800">{title}</h3>
-      <pre className="overflow-x-auto rounded-lg bg-stone-900 px-4 py-3 text-[12px] leading-6 text-stone-100">
-        {JSON.stringify(data, null, 2)}
-      </pre>
-    </section>
-  );
 }
 
 export function ReportPreview({ taskId, isDone, sourceType, onTaskCreated }: Props) {
@@ -87,6 +71,7 @@ export function ReportPreview({ taskId, isDone, sourceType, onTaskCreated }: Pro
   }
 
   if (isResearchTask) {
+    const researchMarkdown = task?.draft_markdown || task?.full_markdown || task?.result_markdown;
     return (
       <div className="max-h-[600px] overflow-y-auto rounded-xl border border-stone-300 bg-white p-8 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
@@ -100,8 +85,110 @@ export function ReportPreview({ taskId, isDone, sourceType, onTaskCreated }: Pro
           )}
         </div>
 
-        {task?.brief && <JsonSection title="Research Brief" data={task.brief} />}
-        {task?.search_plan && <JsonSection title="Search Plan" data={task.search_plan} />}
+        {/* Brief — formatted card */}
+        {task?.brief && (() => {
+          const b = task.brief as ResearchBrief;
+          return (
+            <section className="mb-4 rounded-xl border border-stone-200 bg-white p-4">
+              <h3 className="mb-2 text-xs font-semibold text-stone-500 uppercase tracking-wider">Research Brief</h3>
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-stone-800 leading-snug">{b.topic}</p>
+                {b.goal && <p className="text-xs text-stone-600 leading-relaxed">{b.goal}</p>}
+                {b.sub_questions && b.sub_questions.length > 0 && (
+                  <div className="space-y-0.5 mt-2">
+                    <span className="text-[10px] font-semibold text-stone-400 uppercase">Sub-questions</span>
+                    {b.sub_questions.map((q, i) => (
+                      <div key={i} className="flex items-start gap-1.5">
+                        <span className="mt-0.5 w-1 h-1 rounded-full bg-stone-400 flex-shrink-0" />
+                        <span className="text-xs text-stone-600 leading-snug">{q}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {b.focus_dimensions && b.focus_dimensions.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {b.focus_dimensions.map(d => (
+                      <span key={d} className="px-1.5 py-0.5 rounded bg-stone-100 text-[10px] text-stone-600 border border-stone-200">
+                        {d}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })()}
+
+        {/* Search Plan — formatted stats */}
+        {task?.search_plan && (() => {
+          const p = task.search_plan as SearchPlan;
+          const totalQueries = (p.query_groups ?? []).reduce((acc: number, g: SearchQueryGroup) => acc + (g.queries ?? []).length, 0);
+          const expectedHits = (p.query_groups ?? []).reduce((acc: number, g: SearchQueryGroup) => acc + (g.expected_hits ?? 0), 0);
+          return (
+            <section className="mb-4 rounded-xl border border-stone-200 bg-white p-4">
+              <h3 className="mb-2 text-xs font-semibold text-stone-500 uppercase tracking-wider">Search Plan</h3>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <div className="text-center p-2 rounded-lg bg-stone-50 border border-stone-200">
+                  <div className="text-base font-bold text-stone-800 leading-none">{totalQueries}</div>
+                  <div className="text-[9px] text-stone-500 mt-0.5">queries</div>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-stone-50 border border-stone-200">
+                  <div className="text-base font-bold text-stone-800 leading-none">{(p.query_groups ?? []).length}</div>
+                  <div className="text-[9px] text-stone-500 mt-0.5">groups</div>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-stone-50 border border-stone-200">
+                  <div className="text-base font-bold text-stone-800 leading-none">{expectedHits}</div>
+                  <div className="text-[9px] text-stone-500 mt-0.5">est. hits</div>
+                </div>
+              </div>
+              {p.coverage_strategy && (
+                <div className="mb-2">
+                  <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">
+                    {p.coverage_strategy}
+                  </span>
+                </div>
+              )}
+              {(p.query_groups ?? []).length > 0 && (
+                <div className="space-y-1">
+                  {(p.query_groups ?? []).slice(0, 4).map((g: SearchQueryGroup) => (
+                    <div key={g.group_id} className="flex items-start gap-1.5">
+                      <span className="mt-0.5 w-1 h-1 rounded-full bg-stone-400 flex-shrink-0" />
+                      <span className="text-[11px] text-stone-600 leading-snug truncate flex-1">
+                        {(g.queries ?? [])[0]}
+                      </span>
+                      {g.expected_hits && (
+                        <span className="text-[9px] text-stone-400 flex-shrink-0">~{g.expected_hits}</span>
+                      )}
+                    </div>
+                  ))}
+                  {(p.query_groups ?? []).length > 4 && (
+                    <span className="text-[9px] text-stone-400 pl-2.5">
+                      +{(p.query_groups ?? []).length - 4} more groups
+                    </span>
+                  )}
+                </div>
+              )}
+            </section>
+          );
+        })()}
+
+        {task?.rag_result != null && (
+          <section className="mb-4 rounded-xl border border-stone-200 bg-white p-4">
+            <h3 className="mb-2 text-xs font-semibold text-stone-500 uppercase tracking-wider">RAG Result</h3>
+            <div className="text-xs text-stone-600">
+              {typeof task.rag_result === 'object' && task.rag_result !== null
+                ? `${Object.keys(task.rag_result).length} fields`
+                : String(task.rag_result ?? '')}
+            </div>
+          </section>
+        )}
+
+        {researchMarkdown && !researchMarkdown.trim().startsWith('{') && (
+          <section className="mb-5 rounded-xl border border-stone-200 bg-white p-4">
+            <h3 className="mb-3 text-sm font-semibold text-stone-800">Research Report</h3>
+            <MarkdownRenderer content={researchMarkdown} />
+          </section>
+        )}
 
         {task?.brief?.needs_followup && !task?.search_plan && (
           <>
