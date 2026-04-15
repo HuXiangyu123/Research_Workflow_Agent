@@ -1,107 +1,81 @@
-import sqlite3
-import os
-from typing import Optional, List
-from src.corpus.models import DocumentMeta, Chunk
+"""元数据库访问层（PostgreSQL + SQLAlchemy）。"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
+
+from src.db import get_db_session
+from src.db.models import Chunk as _ORMChunk
+from src.db.models import Document as _ORMDocument
+
+if TYPE_CHECKING:
+    from src.corpus.models import Chunk, DocumentMeta
+
 
 class MetaDB:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._init_db()
+    """PostgreSQL 元数据库访问接口（兼容旧 SQLite 版本）。"""
 
-    def _init_db(self):
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        
-        # documents table
-        c.execute('''CREATE TABLE IF NOT EXISTS documents (
-            doc_id TEXT PRIMARY KEY,
-            source_id TEXT,
-            source_uri TEXT,
-            title TEXT,
-            added_at REAL,
-            updated_at REAL,
-            status TEXT,
-            error TEXT
-        )''')
-        
-        # chunks table
-        c.execute('''CREATE TABLE IF NOT EXISTS chunks (
-            chunk_id TEXT PRIMARY KEY,
-            doc_id TEXT,
-            section_path TEXT,
-            page_start INTEGER,
-            page_end INTEGER,
-            text_hash TEXT,
-            len_chars INTEGER,
-            FOREIGN KEY(doc_id) REFERENCES documents(doc_id)
-        )''')
-        
-        # chunks fts table (for BM25)
-        c.execute('''CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-            chunk_id UNINDEXED,
-            text
-        )''')
-        
-        conn.commit()
-        conn.close()
-
-    def upsert_document(self, doc: DocumentMeta):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute('''INSERT OR REPLACE INTO documents 
-            (doc_id, source_id, source_uri, title, added_at, updated_at, status, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-            (doc.doc_id, doc.source_id, doc.source_uri, doc.title, 
-             doc.added_at, doc.updated_at, doc.status, doc.error))
-        conn.commit()
-        conn.close()
-
-    def get_document(self, doc_id: str) -> Optional[DocumentMeta]:
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute('SELECT * FROM documents WHERE doc_id = ?', (doc_id,))
-        row = c.fetchone()
-        conn.close()
-        if row:
-            return DocumentMeta(
-                doc_id=row[0], source_id=row[1], source_uri=row[2], title=row[3],
-                added_at=row[4], updated_at=row[5], status=row[6], error=row[7]
+    def upsert_document(self, doc: "DocumentMeta") -> None:
+        with get_db_session() as s:
+            orm = _ORMDocument(
+                doc_id=doc.doc_id,
+                source_id=doc.source_id,
+                source_uri=doc.source_uri,
+                title=doc.title,
+                authors=doc.authors,
+                published_date=doc.published_date,
+                summary=doc.summary,
+                added_at=doc.added_at,
+                updated_at=doc.updated_at,
+                status=doc.status,
+                error=doc.error,
             )
-        return None
+            s.merge(orm)
 
-    def insert_chunks(self, chunks: List[Chunk]):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        
-        chunk_data = []
-        fts_data = []
-        for ch in chunks:
-            chunk_data.append((
-                ch.chunk_id, ch.doc_id, str(ch.section_path), 
-                ch.span.page_start, ch.span.page_end, ch.text_hash, ch.len_chars
-            ))
-            fts_data.append((ch.chunk_id, ch.text))
-            
-        c.executemany('''INSERT OR REPLACE INTO chunks 
-            (chunk_id, doc_id, section_path, page_start, page_end, text_hash, len_chars)
-            VALUES (?, ?, ?, ?, ?, ?, ?)''', chunk_data)
-            
-        c.executemany('''INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)''', fts_data)
-        
-        conn.commit()
-        conn.close()
+    def get_document(self, doc_id: str) -> Optional["DocumentMeta"]:
+        from src.corpus.models import DocumentMeta as _DM
 
-    def clear_chunks_for_doc(self, doc_id: str):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        # Delete from chunks table
-        c.execute('DELETE FROM chunks WHERE doc_id = ?', (doc_id,))
-        # FTS delete is tricky without triggers, but for MVP we might accept some stale data in FTS 
-        # or rebuild FTS. A better way for FTS is to use 'delete' command if we track rowid.
-        # For simplicity in MVP, we ignore FTS cleanup here or handle it by full rebuild if needed.
-        # Or better: FTS5 supports delete. But we need to match the text. 
-        # Let's keep it simple: we assume insert_chunks will handle new chunks. 
-        # Ideally we should remove old FTS entries.
-        conn.commit()
-        conn.close()
+        with get_db_session() as s:
+            orm = s.get(_ORMDocument, doc_id)
+            if orm is None:
+                return None
+            return _DM(
+                doc_id=orm.doc_id,
+                source_id=orm.source_id,
+                source_uri=orm.source_uri,
+                title=orm.title,
+                authors=orm.authors,
+                published_date=orm.published_date,
+                summary=orm.summary,
+                added_at=orm.added_at,
+                updated_at=orm.updated_at,
+                status=orm.status,
+                error=orm.error,
+            )
+
+    def insert_chunks(self, chunks: list["Chunk"]) -> None:
+        with get_db_session() as s:
+            orm_chunks = []
+            for ch in chunks:
+                orm_chunks.append(
+                    _ORMChunk(
+                        chunk_id=ch.chunk_id,
+                        doc_id=ch.doc_id,
+                        section_path=ch.section_path,
+                        page_start=ch.span.page_start,
+                        page_end=ch.span.page_end,
+                        char_start=ch.span.char_start,
+                        char_end=ch.span.char_end,
+                        text=ch.text,
+                        text_hash=ch.text_hash,
+                        len_chars=ch.len_chars,
+                    )
+                )
+            for oc in orm_chunks:
+                s.merge(oc)
+
+    def clear_chunks_for_doc(self, doc_id: str) -> None:
+        with get_db_session() as s:
+            s.query(_ORMChunk).filter(_ORMChunk.doc_id == doc_id).delete(
+                synchronize_session="fetch"
+            )

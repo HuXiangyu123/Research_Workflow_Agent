@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 
 from src.agent.prompts import LITERATURE_REPORT_SYSTEM_PROMPT
-from src.validators.citations_validator import has_citations_section
 
 
 def _last_ai_text(state: dict[str, Any]) -> str:
@@ -21,94 +21,107 @@ def _last_ai_text(state: dict[str, Any]) -> str:
     return ""
 
 
-from langchain_core.callbacks import BaseCallbackHandler
+def _final_report_to_markdown(final_report) -> str:
+    """Convert a FinalReport to markdown string."""
+    lines: list[str] = []
+    for section_name, content in final_report.sections.items():
+        lines.append(f"## {section_name}\n\n{content}\n")
+
+    if final_report.citations:
+        lines.append("## 引用\n")
+        for c in final_report.citations:
+            lines.append(f"- {c.label} {c.url} — {c.reason}")
+
+    if final_report.grounding_stats:
+        gs = final_report.grounding_stats
+        lines.append("\n## 引用可信度\n")
+        if gs.total_claims > 0:
+            lines.append(f"- Grounded: {gs.grounded}/{gs.total_claims}")
+            lines.append(f"- Partial: {gs.partial}/{gs.total_claims}")
+            lines.append(f"- Ungrounded: {gs.ungrounded}/{gs.total_claims}")
+            lines.append(f"- Abstained: {gs.abstained}/{gs.total_claims}")
+        lines.append(f"- Tier A 来源占比: {round(gs.tier_a_ratio * 100)}%")
+        lines.append(f"- 报告置信度: {final_report.report_confidence}")
+
+    return "\n".join(lines)
+
+
+def _build_initial_state(
+    raw_input: str = "",
+    pdf_text: str | None = None,
+    report_mode: str = "draft",
+) -> dict:
+    """Build the initial AgentState dict for the new graph."""
+    return {
+        "raw_input": raw_input,
+        "source_type": "arxiv",
+        "report_mode": report_mode,
+        "paper_type": None,
+        "arxiv_id": None,
+        "pdf_text": pdf_text,
+        "source_manifest": None,
+        "normalized_doc": None,
+        "evidence": None,
+        "report_frame": None,
+        "draft_report": None,
+        "resolved_report": None,
+        "verified_report": None,
+        "final_report": None,
+        "draft_markdown": None,
+        "full_markdown": None,
+        "followup_hints": [],
+        "tokens_used": 0,
+        "warnings": [],
+        "errors": [],
+        "degradation_mode": "normal",
+        "node_statuses": {},
+    }
+
 
 def generate_literature_report(
-    agent: Runnable, 
-    arxiv_url_or_id: str | None = None, 
+    agent: Runnable | None = None,
+    arxiv_url_or_id: str | None = None,
     raw_text_content: str | None = None,
     callbacks: list[BaseCallbackHandler] | None = None,
     extra_system_context: str | None = None,
-    chat_history: list[Any] | None = None
+    chat_history: list[Any] | None = None,
 ) -> str:
     """
-    生成文献报告。
-    可以传入 arxiv 链接/ID，也可以直接传入论文文本内容。
-    chat_history: 历史对话消息列表，用于连续对话
+    Generate a literature report using the new StateGraph pipeline.
+
+    Backward compatible: *agent* is accepted but ignored when the new graph
+    is available.  Falls back to the old ReAct path only for multi-turn chat
+    (when *chat_history* is provided together with an *agent*).
     """
-    if chat_history:
-        # Chat mode: just append new user input
-        # User input is either arxiv_url_or_id (as text) or raw_text_content
+    # Multi-turn chat: keep using the old agent (the graph is single-shot)
+    if chat_history and agent:
         user_input = raw_text_content or arxiv_url_or_id
         if not user_input:
-             return "Error: No input provided."
-             
+            return "Error: No input provided."
         messages = list(chat_history)
-        
-        # Ensure system prompt is present if history is empty (shouldn't happen usually if managed right)
-        # But we trust caller manages history. 
-        # Actually, for robustness, let's just append the new human message.
         messages.append(HumanMessage(content=user_input))
-        
         config = {"callbacks": callbacks} if callbacks else None
-        
-        state = agent.invoke(
-            {"messages": messages},
-            config=config
-        )
+        state = agent.invoke({"messages": messages}, config=config)
         return _last_ai_text(state)
 
-    # Standard Report Generation Mode
-    if raw_text_content:
-        # 直接基于文本内容生成
-        # 注意：这里可能会受到 Context Window 限制，DeepSeek V3/R1 支持长上下文
-        prompt = (
-            "请基于以下提供的论文内容（全文文本）生成详细的文献报告。\n"
-            "输出为 Markdown。\n"
-            "必须包含：标题、核心贡献、方法概述、关键实验/结果、局限性、可复现要点、相关工作。\n"
-            "最后必须包含“引用”小节，列出文中提到的参考文献或链接（如果文本中包含引用信息），格式为 label、url、reason。\n"
-            "如果无法获取外部 URL，请根据文本内容推断或保留原始引用标记。\n\n"
-            "=== 论文内容开始 ===\n"
-            f"{raw_text_content[:100000]}..." # 简单截断防止过长，假设 DeepSeek 足够强
-            "\n=== 论文内容结束 ==="
-        )
-    elif arxiv_url_or_id:
-        prompt = (
-            "请根据以下 arXiv 链接或 arXiv ID 生成文献报告：\n"
-            f"{arxiv_url_or_id}\n\n"
-            "输出为 Markdown。\n"
-            "必须包含：标题、核心贡献、方法概述、关键实验/结果、局限性、可复现要点、相关工作。\n"
-            "最后必须包含“引用”小节，列出每条引用的 label、url、reason。"
-        )
-    else:
-        return "Error: No input provided (arxiv_url_or_id or raw_text_content required)."
+    # New graph path
+    from src.graph.builder import build_report_graph
 
-    config = {"callbacks": callbacks} if callbacks else None
-
-    messages: list[Any] = [SystemMessage(content=LITERATURE_REPORT_SYSTEM_PROMPT)]
-    if extra_system_context and extra_system_context.strip():
-        messages.append(SystemMessage(content=extra_system_context.strip()))
-    messages.append(HumanMessage(content=prompt))
-
-    state = agent.invoke(
-        {"messages": messages},
-        config=config
+    graph = build_report_graph()
+    initial_state = _build_initial_state(
+        raw_input=arxiv_url_or_id or "",
+        pdf_text=raw_text_content if raw_text_content else None,
+        report_mode="draft",
     )
-    text = _last_ai_text(state)
 
-    if has_citations_section(text):
-        return text
+    result = graph.invoke(initial_state)
 
-    repair_prompt = (
-        "你上一轮输出缺少“引用”小节。请保持原结构不变，在末尾补充“引用”小节，"
-        "列出至少 3 条可追溯引用，每条包含 label、url、reason。输出 Markdown。\n\n"
-        f"原输出：\n{text}"
-    )
-    repair_messages: list[Any] = [SystemMessage(content=LITERATURE_REPORT_SYSTEM_PROMPT)]
-    if extra_system_context and extra_system_context.strip():
-        repair_messages.append(SystemMessage(content=extra_system_context.strip()))
-    repair_messages.append(HumanMessage(content=repair_prompt))
+    errors = result.get("errors", [])
+    if errors and not result.get("final_report"):
+        return "Error generating report:\n" + "\n".join(errors)
 
-    repaired_state = agent.invoke({"messages": repair_messages}, config=config)
-    repaired_text = _last_ai_text(repaired_state)
-    return repaired_text or text
+    final = result.get("final_report")
+    if final:
+        return _final_report_to_markdown(final)
+
+    return "Error: No report generated."
