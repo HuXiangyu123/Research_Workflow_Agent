@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { TaskSubmitForm } from './components/TaskSubmitForm';
 import { GraphView } from './components/GraphView';
-import { ToolLogPanel } from './components/ToolLogPanel';
 import { ProgressBar } from './components/ProgressBar';
 import { ReportPreview } from './components/ReportPreview';
 import { TaskHistory } from './components/TaskHistory';
 import { ChatPanel } from './components/ChatPanel';
 import { ThinkingPanel } from './components/ThinkingPanel';
+import { WorkspaceInspectorPanel } from './components/WorkspaceInspectorPanel';
 import { useTaskSSE } from './hooks/useTaskSSE';
 import type { SourceType, WorkflowMode } from './types/task';
 import './index.css';
@@ -55,6 +55,7 @@ function App() {
           onTaskCreated={handleTaskCreated}
           workflowMode={workflowMode}
           onWorkflowModeChange={setWorkflowMode}
+          workspaceId={sse.workspaceId}
         />
       </div>
 
@@ -106,6 +107,11 @@ function App() {
             taskId={activeTaskId}
             isDone={sse.isDone}
             sourceType={effectiveSourceType}
+            workspaceId={sse.workspaceId}
+            liveMarkdown={sse.latestReportMarkdown}
+            liveArtifactName={sse.latestReportArtifact}
+            currentStage={sse.currentStage}
+            taskStatus={sse.taskStatus}
             onTaskCreated={handleTaskCreated}
           />
           <ChatPanel taskId={activeTaskId} isDone={sse.isDone} />
@@ -113,7 +119,13 @@ function App() {
 
         <div className="w-80 flex-shrink-0">
           <div className="h-[660px]">
-            <ToolLogPanel events={sse.events} />
+            <WorkspaceInspectorPanel
+              taskId={activeTaskId}
+              workspaceId={sse.workspaceId}
+              isRunning={sse.taskStatus === 'running'}
+              events={sse.events}
+              highlightArtifact={sse.latestReportArtifact}
+            />
           </div>
         </div>
       </div>

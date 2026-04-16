@@ -4,7 +4,14 @@ export type PaperType = 'regular' | 'survey';
 export type WorkflowMode = 'report' | 'research';
 
 export interface TaskEvent {
-  type: 'node_start' | 'node_end' | 'status_change' | 'done' | 'thinking';
+  type:
+    | 'node_start'
+    | 'node_end'
+    | 'status_change'
+    | 'done'
+    | 'thinking'
+    | 'artifact_ready'
+    | 'report_snapshot';
   node?: string;
   status?: string;
   timestamp?: string;
@@ -13,6 +20,10 @@ export interface TaskEvent {
   duration_ms?: number;
   content?: string;
   error?: string;
+  artifact_name?: string;
+  workspace_id?: string;
+  summary?: string;
+  is_final?: boolean;
 }
 
 export interface ThinkingEntry {
@@ -30,7 +41,8 @@ export interface Task {
   paper_type?: PaperType;
   draft_markdown?: string;
   full_markdown?: string;
-  result_markdown?: string;   // research 模式：brief/search_plan JSON
+  result_markdown?: string;
+  workspace_id?: string;
   followup_hints?: string[];
   chat_history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   error?: string;
@@ -38,6 +50,22 @@ export interface Task {
   // research 模式下完整 state
   brief?: ResearchBrief;
   search_plan?: SearchPlan;
+  rag_result?: unknown;
+  paper_cards?: Array<Record<string, unknown>>;
+  compression_result?: unknown;
+  taxonomy?: unknown;
+  draft_report?: unknown;
+  review_feedback?: unknown;
+  review_passed?: boolean;
+  artifacts_created?: Array<Record<string, unknown>>;
+  artifact_count?: number;
+  collaboration_trace?: Array<Record<string, unknown>>;
+  supervisor_mode?: 'graph' | 'llm_handoff' | string;
+  awaiting_followup?: boolean;
+  followup_resolution?: unknown;
+  persisted_to_db?: boolean;
+  persisted_report_id?: string;
+  persistence_error?: string;
 }
 
 export interface ResearchAmbiguity {
@@ -108,6 +136,11 @@ export const REPORT_GRAPH_NODES = [
 export const RESEARCH_GRAPH_NODES = [
   'clarify',
   'search_plan',
+  'search',
+  'extract',
+  'draft',
+  'review',
+  'persist_artifacts',
 ] as const;
 
 export type ReportNodeName = typeof REPORT_GRAPH_NODES[number];
@@ -139,6 +172,11 @@ export const GRAPH_NODE_LABELS: Record<AnyNodeName, string> = {
   format_output: 'Format Output',
   clarify: 'Clarify Brief',
   search_plan: 'Search Plan',
+  search: 'Search Papers',
+  extract: 'Extract Cards',
+  draft: 'Draft Survey',
+  review: 'Review',
+  persist_artifacts: 'Persist',
 };
 
 export function getWorkflowMode(sourceType?: SourceType | null): WorkflowMode {

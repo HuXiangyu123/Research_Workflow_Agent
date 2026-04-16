@@ -30,6 +30,7 @@ from typing import Any
 from typing import TypedDict
 
 from langgraph.graph import START, StateGraph
+from src.agent.checkpointing import build_graph_config, get_langgraph_checkpointer
 from src.memory.manager import get_memory_manager
 from src.models.report import DraftReport
 
@@ -132,7 +133,8 @@ class AnalystAgent:
                 "brief": brief,
                 "paper_cards": paper_cards,
                 "warnings": [],
-            }
+            },
+            config=build_graph_config("analyst_agent"),
         )
         artifacts = list(result.get("artifacts", []))
         return {
@@ -222,21 +224,21 @@ class AnalystAgent:
 
     # ── L3: Outline ───────────────────────────────────────────────────────
 
-    def _build_outline(self, state: ReasoningState) -> dict:
-        from src.skills.research_skills import writing_scaffold_generator
-
+    def _build_outline(self, state: ReasoningState, brief: dict[str, Any] | None = None) -> dict:
         cards_artifact = state.get_by_type("structured_cards")
         matrix_artifact = state.get_by_type("comparison_matrix")
 
-        brief = {}
         topic = ""
         cards = []
         matrix = {}
 
+        if brief:
+            topic = str(brief.get("research_topic") or brief.get("topic") or "").strip()
+
         if cards_artifact:
             cards = cards_artifact[0].content or []
-            if cards and isinstance(cards[0], dict):
-                topic = cards[0].get("title", "") or "Research Topic"
+            if not topic and cards and isinstance(cards[0], dict):
+                topic = str(cards[0].get("title", "") or "").strip()
 
         if matrix_artifact:
             matrix = matrix_artifact[0].content or {}
@@ -244,19 +246,52 @@ class AnalystAgent:
         if not topic:
             topic = "Research Topic"
 
-        result = writing_scaffold_generator(
-            {
-                "topic": topic,
-                "paper_cards": cards[:10],
-                "comparison_matrix": matrix,
-                "desired_length": "medium",
-            },
-            {"workspace_id": self.workspace_id} if self.workspace_id else {},
-        )
-        if "error" in result:
-            return {"error": result["error"], "outline": {}, "confidence": 0.3}
+        method_items: list[str] = []
+        dataset_items: list[str] = []
+        if isinstance(matrix, dict):
+            for row in matrix.get("rows", [])[:8]:
+                if not isinstance(row, dict):
+                    continue
+                paper = str(row.get("paper", "")).strip()
+                methods = str(row.get("methods", "")).strip()
+                datasets = str(row.get("datasets", "")).strip()
+                if paper and methods:
+                    method_items.append(f"{paper}: {methods}")
+                if paper and datasets:
+                    dataset_items.append(f"{paper}: {datasets}")
 
-        outline = result.get("scaffold", {}) or result.get("outline", {})
+        if not method_items:
+            for card in cards[:6]:
+                if not isinstance(card, dict):
+                    continue
+                title = str(card.get("title", "")).strip()
+                methods = card.get("methods", [])
+                if title and methods:
+                    method_items.append(f"{title}: {methods}")
+
+        outline = {
+            "title": f"{topic} Survey",
+            "abstract": "Summarize the research problem, scope, method families, benchmarks, and main findings.",
+            "introduction": [
+                f"Define the problem background and motivation for {topic}",
+                "Explain the survey scope, problem setting, and contribution",
+            ],
+            "background": [
+                "Introduce the core concepts, task definition, and typical system setup",
+                "Explain why the problem matters in real applications",
+            ],
+            "methods_review": method_items[:6] or ["Summarize the main method families and representative papers"],
+            "datasets_and_benchmarks": dataset_items[:6] or ["Review the main datasets, evaluation tasks, and metrics"],
+            "challenges_and_limitations": [
+                "Analyze coverage, generalization, robustness, and engineering cost",
+                "Discuss evidence gaps, reproducibility concerns, and deployment constraints",
+            ],
+            "future_directions": [
+                "Summarize open problems and feasible next directions",
+                "Highlight evaluation standardization and real-world deployment",
+            ],
+            "conclusion": "Summarize the main findings and practical takeaways.",
+        }
         confidence = (cards_artifact[0].confidence + matrix_artifact[0].confidence) / 2 if (cards_artifact and matrix_artifact) else 0.5
 
         return {"outline": outline, "confidence": min(0.9, confidence)}
@@ -283,30 +318,30 @@ class AnalystAgent:
         outline_text = self._format_outline(outline)
         matrix_text = self._format_matrix(matrix)
 
-        SYSTEM = """你是一个科研综述报告生成专家。给定报告大纲和对比矩阵，直接生成完整报告（JSON 格式）。
+        SYSTEM = """You are a scientific survey drafting expert. Given a report outline and a comparison matrix, generate the complete report in JSON.
 
-输出严格 JSON：
+Return strict JSON:
 {
-  "title": "报告标题",
+  "title": "English report title",
   "sections": {
-    "abstract": "摘要（200字）",
-    "introduction": "引言（300字）",
-    "methods_review": "方法综述（500字）",
-    "datasets_and_benchmarks": "数据集与基准（300字）",
-    "challenges": "挑战与局限（200字）",
-    "conclusion": "结论（200字）"
+    "abstract": "Abstract",
+    "introduction": "Introduction",
+    "methods_review": "Methods review",
+    "datasets_and_benchmarks": "Datasets and benchmarks",
+    "challenges": "Challenges and limitations",
+    "conclusion": "Conclusion"
   }
 }"""
 
-        user_prompt = f"""## 报告大纲
+        user_prompt = f"""## Report Outline
 
 {outline_text}
 
-## 对比矩阵
+## Comparison Matrix
 
 {matrix_text}
 
-请基于以上信息生成完整报告 JSON。
+Generate the full report JSON from the information above.
 """
 
         try:
@@ -355,7 +390,7 @@ class AnalystAgent:
 
     def _format_outline(self, outline: Any) -> str:
         if isinstance(outline, dict):
-            lines = ["## 报告大纲"]
+            lines = ["## Report Outline"]
             for key, val in outline.items():
                 if isinstance(val, list):
                     lines.append(f"### {key}")
@@ -368,14 +403,28 @@ class AnalystAgent:
 
     def _format_matrix(self, matrix: Any) -> str:
         if not matrix:
-            return "（无对比矩阵）"
+            return "(No comparison matrix)"
         if isinstance(matrix, dict) and "rows" in matrix:
             rows = matrix["rows"]
-            lines = ["## 对比矩阵"]
+            lines = ["## Comparison Matrix"]
             for row in rows[:10]:
                 lines.append(f"- **{row.get('paper', '')}**: {row.get('methods', '')}")
             return "\n".join(lines)
         return str(matrix)
+
+    def _needs_grounded_redraft(self, draft_report: DraftReport | None) -> bool:
+        if draft_report is None:
+            return True
+        sections = draft_report.sections or {}
+        if len(sections) < 8:
+            return True
+        body = "\n".join(str(value) for value in sections.values())
+        if len(body) < 4000:
+            return True
+        lowered = body.lower()
+        if "research topic" in lowered or "[research topic]" in lowered:
+            return True
+        return False
 
     def _store_artifacts_memory(self, state: ReasoningState) -> None:
         if not self.mm:
@@ -425,7 +474,7 @@ class AnalystAgent:
         workflow.add_edge("build_comparison_matrix", "build_outline")
         workflow.add_edge("build_outline", "build_report_draft")
         workflow.add_edge("build_report_draft", "verify_and_finalize")
-        return workflow.compile()
+        return workflow.compile(checkpointer=get_langgraph_checkpointer("analyst_agent"))
 
     def _seed_reasoning_state(self, state: "AnalystGraphState") -> dict[str, Any]:
         return {"reasoning_state": ReasoningState()}
@@ -470,7 +519,7 @@ class AnalystAgent:
 
     def _outline_node(self, state: "AnalystGraphState") -> dict[str, Any]:
         reasoning_state = state.get("reasoning_state") or ReasoningState()
-        result = self._build_outline(reasoning_state)
+        result = self._build_outline(reasoning_state, state.get("brief") or {})
         warnings = list(state.get("warnings", []))
         if "error" not in result:
             reasoning_state.add(
@@ -488,31 +537,75 @@ class AnalystAgent:
         return {"reasoning_state": reasoning_state, "warnings": warnings}
 
     def _report_draft_node(self, state: "AnalystGraphState") -> dict[str, Any]:
+        from src.research.graph.nodes.draft import (
+            _build_draft_report as _grounded_build_draft_report,
+            build_drafting_skill_artifacts,
+        )
+
         reasoning_state = state.get("reasoning_state") or ReasoningState()
-        result = self._build_report_draft(reasoning_state)
         warnings = list(state.get("warnings", []))
-        if "error" not in result:
+        skill_artifacts = build_drafting_skill_artifacts(
+            list(state.get("paper_cards", [])),
+            state.get("brief"),
+            workspace_id=self.workspace_id,
+            task_id=self.task_id,
+        )
+        try:
+            grounded_report = _grounded_build_draft_report(
+                list(state.get("paper_cards", [])),
+                state.get("brief"),
+                skill_artifacts=skill_artifacts,
+            )
             reasoning_state.add(
                 Artifact(
                     level=4,
                     artifact_type="report_draft",
-                    content=result.get("draft", {}),
-                    confidence=result.get("confidence", 0.5),
+                    content=grounded_report.model_dump(mode="json"),
+                    confidence=0.85,
                     dependencies=["structured_cards", "comparison_matrix", "outline"],
                     created_by="llm",
                 )
             )
-        else:
-            warnings.append(str(result["error"]))
-        return {"reasoning_state": reasoning_state, "warnings": warnings}
+        except Exception as exc:
+            result = self._build_report_draft(reasoning_state)
+            if "error" not in result:
+                reasoning_state.add(
+                    Artifact(
+                        level=4,
+                        artifact_type="report_draft",
+                        content=result.get("draft", {}),
+                        confidence=result.get("confidence", 0.5),
+                        dependencies=["structured_cards", "comparison_matrix", "outline"],
+                        created_by="llm",
+                    )
+                )
+            else:
+                warnings.append(str(exc))
+                warnings.append(str(result["error"]))
+        return {
+            "reasoning_state": reasoning_state,
+            "warnings": warnings,
+            "drafting_skill_artifacts": skill_artifacts,
+        }
 
     def _verify_and_finalize_node(self, state: "AnalystGraphState") -> dict[str, Any]:
         from src.research.graph.nodes.draft import _build_markdown
+        from src.research.graph.nodes.draft import (
+            _build_draft_report as _grounded_build_draft_report,
+            build_drafting_skill_artifacts,
+        )
 
         reasoning_state = state.get("reasoning_state") or ReasoningState()
         verification = self._verify_confidence(reasoning_state)
         if self.mm:
             self._store_artifacts_memory(reasoning_state)
+
+        skill_artifacts = state.get("drafting_skill_artifacts") or build_drafting_skill_artifacts(
+            list(state.get("paper_cards", [])),
+            state.get("brief"),
+            workspace_id=self.workspace_id,
+            task_id=self.task_id,
+        )
 
         structured_cards = None
         comparison_matrix = None
@@ -527,12 +620,32 @@ class AnalystAgent:
         if reasoning_state.get_by_type("report_draft"):
             report_draft = reasoning_state.get_by_type("report_draft")[0].content
 
+        if comparison_matrix is None:
+            comparison_matrix = skill_artifacts.get("comparison_matrix")
+        if outline is None:
+            outline = skill_artifacts.get("writing_outline")
+
         draft_report = self._coerce_draft_report(report_draft)
+        if self._needs_grounded_redraft(draft_report):
+            regenerated = _grounded_build_draft_report(
+                list(state.get("paper_cards", [])),
+                state.get("brief"),
+                skill_artifacts=skill_artifacts,
+            )
+            draft_report = regenerated
+            report_draft = regenerated.model_dump(mode="json")
+            verification.setdefault("warnings", []).append(
+                "AnalystAgent draft lacked grounded detail; regenerated with research draft builder."
+            )
         draft_markdown = _build_markdown(draft_report, state.get("brief")) if draft_report else None
         return {
             "structured_cards": structured_cards,
             "comparison_matrix": comparison_matrix,
             "outline": outline,
+            "writing_scaffold": skill_artifacts.get("writing_scaffold"),
+            "writing_outline": skill_artifacts.get("writing_outline"),
+            "mcp_prompt_payload": skill_artifacts.get("mcp_prompt_payload"),
+            "skill_trace": skill_artifacts.get("skill_trace", []),
             "report_draft": report_draft,
             "draft_report": draft_report,
             "draft_markdown": draft_markdown,
@@ -589,6 +702,11 @@ class AnalystGraphState(TypedDict, total=False):
     artifacts: list[dict[str, Any]]
     overall_confidence: float
     verification: dict[str, Any]
+    drafting_skill_artifacts: dict[str, Any]
+    writing_scaffold: dict[str, Any] | None
+    writing_outline: list[str] | None
+    mcp_prompt_payload: dict[str, Any] | None
+    skill_trace: list[dict[str, Any]]
 
 
 # ─── 入口函数 ───────────────────────────────────────────────────────────────
@@ -600,10 +718,21 @@ def run_analyst_agent(state: dict, inputs: dict) -> dict:
     task_id = inputs.get("task_id") or state.get("task_id")
     brief = state.get("brief") or {}
     paper_cards = state.get("paper_cards") or inputs.get("paper_cards", [])
+    emitter = inputs.get("_event_emitter")
 
     agent = AnalystAgent(workspace_id=workspace_id, task_id=task_id)
     try:
-        return agent.run(brief=brief, paper_cards=paper_cards)
+        if emitter:
+            emitter.on_thinking("draft", "Analyst agent is assembling writing artifacts and drafting the survey.")
+        result = agent.run(brief=brief, paper_cards=paper_cards)
+        if emitter:
+            draft_report = result.get("draft_report") if isinstance(result, dict) else None
+            if isinstance(draft_report, dict):
+                citations = len(draft_report.get("citations", []) or [])
+            else:
+                citations = len(getattr(draft_report, "citations", []) or [])
+            emitter.on_thinking("draft", f"Draft stage produced a structured report with {citations} citations.")
+        return result
     except Exception as exc:
         logger.exception("[AnalystAgent] run failed: %s", exc)
         return {

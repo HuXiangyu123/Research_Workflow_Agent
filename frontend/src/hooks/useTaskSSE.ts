@@ -12,6 +12,9 @@ interface SSEState {
   sourceType: SourceType | null;
   currentStage: string | null;
   taskStatus: Task['status'] | null;
+  workspaceId: string | null;
+  latestReportMarkdown: string | null;
+  latestReportArtifact: string | null;
 }
 
 const INITIAL_STATUSES = () =>
@@ -28,6 +31,9 @@ function createInitialState(): SSEState {
     sourceType: null,
     currentStage: null,
     taskStatus: null,
+    workspaceId: null,
+    latestReportMarkdown: null,
+    latestReportArtifact: null,
   };
 }
 
@@ -57,6 +63,7 @@ export function useTaskSSE(taskId: string | null) {
           sourceType: task.source_type ?? null,
           currentStage: task.current_stage ?? null,
           taskStatus: task.status,
+          workspaceId: task.workspace_id ?? null,
           isDone: task.status === 'completed' || task.status === 'failed',
         }));
       })
@@ -77,6 +84,9 @@ export function useTaskSSE(taskId: string | null) {
           let newDuration = prev.totalDurationMs;
           let currentStage = prev.currentStage;
           let taskStatus = prev.taskStatus;
+          let workspaceId = prev.workspaceId;
+          let latestReportMarkdown = prev.latestReportMarkdown;
+          let latestReportArtifact = prev.latestReportArtifact;
 
           if (event.type === 'node_start' && isKnownNode(event.node)) {
             newStatuses[event.node] = 'running';
@@ -97,6 +107,13 @@ export function useTaskSSE(taskId: string | null) {
             newThinking = [...prev.thinkingEntries, { node: event.node, content: event.content }];
           } else if (event.type === 'status_change' && event.status) {
             taskStatus = event.status as Task['status'];
+          } else if (event.type === 'report_snapshot' && event.content) {
+            latestReportMarkdown = event.content;
+            latestReportArtifact = event.artifact_name ?? null;
+          }
+
+          if (event.workspace_id) {
+            workspaceId = event.workspace_id;
           }
 
           const isDone = event.type === 'done';
@@ -113,6 +130,9 @@ export function useTaskSSE(taskId: string | null) {
             sourceType: prev.sourceType,
             currentStage,
             taskStatus,
+            workspaceId,
+            latestReportMarkdown,
+            latestReportArtifact,
           };
         });
         if (event.type === 'done') {

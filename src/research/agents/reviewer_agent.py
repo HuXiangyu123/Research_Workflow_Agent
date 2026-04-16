@@ -2,7 +2,7 @@
 
 设计模式说明：
 - Reflexion = 口头强化（Verbal Reinforcement）：Agent 在每次失败后，
-  生成自我反思（self-reflection），将反思结果存储到长期记忆，
+  生成自我反思（self-reflection），将反思结果存储到运行期 memory adapter，
   下次遇到相似任务时检索并利用这些反思。
 - 核心思想：
   1. Agent 执行任务并获得结果（成功或失败）
@@ -31,12 +31,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from inspect import isawaitable
 from typing import Any
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from src.agent.checkpointing import build_graph_config, get_langgraph_checkpointer
 from src.memory.manager import get_memory_manager
 
 logger = logging.getLogger(__name__)
@@ -60,13 +64,13 @@ class SelfReflection:
 
     def to_prompt(self) -> str:
         lines = [
-            f"## 失败情景：{self.task_type}",
-            f"**失败上下文**：{self.failure_context}",
-            f"**根本原因**：{self.root_cause}",
-            f"**改进策略**：{self.improved_strategy}",
+            f"## Failure Case: {self.task_type}",
+            f"**Failure context**: {self.failure_context}",
+            f"**Root cause**: {self.root_cause}",
+            f"**Improved strategy**: {self.improved_strategy}",
         ]
         if self.lessons:
-            lines.append("**经验教训**：")
+            lines.append("**Lessons**:")
             for lesson in self.lessons:
                 lines.append(f"- {lesson}")
         return "\n".join(lines)
@@ -75,36 +79,36 @@ class SelfReflection:
 # ─── Reflexion Prompt Templates ───────────────────────────────────────────────
 
 
-SELF_REFLECTION_PROMPT = """你是一个自我反思专家（Self-Reflector）。
+SELF_REFLECTION_PROMPT = """You are a self-reflection expert.
 
-给定以下审查失败案例，请生成深度自我反思：
+Given the following review failure case, generate a deep self-reflection:
 
-任务类型：{task_type}
-失败的上下文：{failure_context}
-失败详情：{failure_details}
+Task type: {task_type}
+Failure context: {failure_context}
+Failure details: {failure_details}
 
-请分析：
-1. 根本原因（root cause）：为什么失败？具体到哪个环节？
-2. 经验教训（lessons）：下次如何避免？给出 2-3 条可操作的建议
-3. 改进策略（improved_strategy）：下次遇到类似任务，应该如何改变策略？
+Analyze:
+1. Root cause: why did this fail, and at which step?
+2. Lessons: how should the system avoid this next time? Provide 2-3 actionable suggestions.
+3. Improved strategy: what concrete strategy should be used for similar tasks in the future?
 
-输出（严格 JSON）：
+Output (strict JSON):
 {{
-  "root_cause": "根本原因分析",
-  "lessons": ["经验教训1", "经验教训2", "经验教训3"],
-  "improved_strategy": "下次改进的具体策略"
+  "root_cause": "Root-cause analysis",
+  "lessons": ["Lesson 1", "Lesson 2", "Lesson 3"],
+  "improved_strategy": "Concrete strategy for the next attempt"
 }}
 """
 
 
-MEMORY_RETRIEVAL_PROMPT = """你是一个经验检索专家。
+MEMORY_RETRIEVAL_PROMPT = """You are an experience retrieval expert.
 
-给定当前审查任务，从历史失败经验中选择最相关的 2-3 条。
+Given the current review task, choose the 2-3 most relevant prior failure lessons.
 
-当前任务：{task_description}
-历史失败经验：{reflections}
+Current task: {task_description}
+Historical failure lessons: {reflections}
 
-请选择最相关的经验，并说明为什么相关。
+Select the most relevant lessons and explain why they apply.
 """
 
 
@@ -153,7 +157,13 @@ class ReviewerAgent:
         self.mm = get_memory_manager(workspace_id) if workspace_id else None
         self._reflections: list[SelfReflection] = []
 
-    def run(self, brief: dict, paper_cards: list, draft_report: Any | None) -> dict[str, Any]:
+    def run(
+        self,
+        brief: dict,
+        paper_cards: list,
+        draft_report: Any | None,
+        rag_result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         完整 Reflexion Pipeline。
 
@@ -168,22 +178,31 @@ class ReviewerAgent:
                 "brief": brief,
                 "paper_cards": paper_cards,
                 "draft_report": draft_report,
+                "rag_result": rag_result or {},
                 "attempt": 0,
                 "attempt_history": [],
                 "prior_reflections": [],
-            }
+            },
+            config=build_graph_config(
+                "reviewer_agent",
+                recursion_limit=self.MAX_ATTEMPTS * 4 + 10,
+            ),
         )
         return {
             "review_passed": bool(result.get("review_passed")),
             "review_feedback": result.get("review_feedback"),
             "attempt_history": list(result.get("attempt_history", [])),
             "best_attempt": result.get("best_attempt", {}),
+            "draft_markdown": (result.get("best_attempt") or {}).get("draft_markdown"),
+            "final_report": (result.get("best_attempt") or {}).get("final_report"),
+            "claim_verification": result.get("claim_verification", {}),
+            "skill_trace": list(result.get("skill_trace", [])),
             "total_attempts": int(result.get("total_attempts", 0)),
             "reflections_stored": int(result.get("reflections_stored", 0)),
             "paradigm": "reflexion",
             "summary": result.get("summary")
             or (
-                f"Reflexion 完成：{int(result.get('total_attempts', 0))} 次尝试，"
+                f"Reflexion completed after {int(result.get('total_attempts', 0))} attempts, "
                 f"passed={bool(result.get('review_passed'))}, "
                 f"best_confidence={float((result.get('best_attempt') or {}).get('confidence', 0.0)):.2f}"
             ),
@@ -197,13 +216,12 @@ class ReviewerAgent:
         brief: dict,
         paper_cards: list,
         draft_report: Any | None,
+        rag_result: dict[str, Any] | None,
         prior_reflections: list[SelfReflection],
         attempt: int,
     ) -> dict[str, Any]:
         """Actor：基于当前上下文（含历史反思）执行审查。"""
-        from src.research.services.reviewer import ReviewerService
-
-        reviewer = ReviewerService()
+        from src.research.graph.nodes.review import review_node
 
         # 将 prior_reflections 注入上下文
         reflection_context = ""
@@ -220,17 +238,32 @@ class ReviewerAgent:
             pass
 
         try:
-            feedback = reviewer.review(
-                task_id=self.task_id or "",
-                workspace_id=self.workspace_id or "",
-                rag_result=None,
-                paper_cards=paper_cards,
-                report_draft=draft_report,
+            review_result = review_node(
+                {
+                    "task_id": self.task_id or "",
+                    "workspace_id": self.workspace_id or "",
+                    "brief": brief,
+                    "rag_result": rag_result or {},
+                    "paper_cards": paper_cards,
+                    "draft_report": draft_report,
+                }
             )
+            feedback = self._serialize_feedback(review_result.get("review_feedback"))
+            claim_verification = review_result.get("claim_verification", {})
+            grounding_stats = claim_verification.get("grounding_stats", {})
+            supported_ratio = float(grounding_stats.get("supported_ratio", 0.0) or 0.0)
+            issue_count = len(feedback.get("issues", [])) if isinstance(feedback, dict) else 0
+            confidence = max(0.1, min(0.95, 0.35 + supported_ratio * 0.5 - issue_count * 0.05))
+            if isinstance(feedback, dict) and feedback.get("passed") is True:
+                confidence = max(confidence, 0.85)
             return {
                 "feedback": feedback,
-                "confidence": 1.0 - (feedback.issues_count() / max(feedback.issues_count(), 1)) * 0.5 if hasattr(feedback, "issues_count") else 0.7,
+                "confidence": confidence,
                 "reflection_context_used": bool(reflection_context),
+                "draft_markdown": review_result.get("draft_markdown"),
+                "final_report": self._serialize_feedback(review_result.get("final_report")),
+                "claim_verification": claim_verification,
+                "skill_trace": list(review_result.get("skill_trace", [])),
             }
         except Exception as exc:
             logger.warning("[ReviewerAgent] Actor review failed: %s", exc)
@@ -249,7 +282,18 @@ class ReviewerAgent:
         issues: list[str] = []
 
         if feedback:
-            if hasattr(feedback, "passed"):
+            if isinstance(feedback, dict):
+                passed = bool(feedback.get("passed", False))
+                raw_issues = feedback.get("issues", [])
+                if isinstance(raw_issues, list):
+                    issues = [
+                        item.get("summary", str(item))
+                        if isinstance(item, dict)
+                        else str(item)
+                        for item in raw_issues
+                    ]
+                reason = str(feedback.get("summary", "") or "")
+            elif hasattr(feedback, "passed"):
                 passed = feedback.passed
             if hasattr(feedback, "issues"):
                 issues = [str(i) for i in (feedback.issues or [])]
@@ -281,7 +325,7 @@ class ReviewerAgent:
         Self-Reflector：失败时生成深度自我反思。
 
         这是 Reflexion 模式的核心：不是简单重试，
-        而是 LLM 生成结构化的失败分析，存入长期记忆。
+        而是 LLM 生成结构化的失败分析，存入运行期 memory adapter。
         """
         import time
 
@@ -300,7 +344,7 @@ class ReviewerAgent:
 
         try:
             resp = llm.invoke([
-                SystemMessage(content="你是一个自我反思专家。分析失败案例，输出 JSON。"),
+                SystemMessage(content="You are a self-reflection expert. Analyze the failure case and return JSON only."),
                 HumanMessage(content=prompt),
             ])
             raw = resp.content if hasattr(resp, "content") else str(resp)
@@ -330,7 +374,7 @@ class ReviewerAgent:
 
     def _retrieve_reflections(self, brief: dict, draft_report: Any | None) -> list[SelfReflection]:
         """
-        Memory Retrieval：从 SemanticMemory 和 EpisodicMemory 中检索历史失败经验。
+        Runtime memory retrieval: fetch prior failure lessons from the runtime cache.
 
         Reflexion 的关键：不是盲目重试，而是从历史失败中学习。
         """
@@ -341,7 +385,7 @@ class ReviewerAgent:
         reflections: list[SelfReflection] = []
 
         try:
-            # 从 SemanticMemory 检索相关失败经验
+            # Runtime vector cache: retrieve related failure lessons.
             semantic_entries = self.mm.search_semantic(
                 query=f"审查失败经验 {topic}" if topic else "审查失败经验",
                 top_k=3,
@@ -371,12 +415,12 @@ class ReviewerAgent:
         return reflections
 
     def _store_reflection(self, reflection: SelfReflection) -> None:
-        """Memory Store：将 self-reflection 存入 SemanticMemory。"""
+        """Store a self-reflection in the runtime memory adapter."""
         if not self.mm:
             return
 
         try:
-            # SemanticMemory：存储反思文本（用于检索）
+            # Runtime vector cache: store reflection text for retrieval.
             self.mm.add_semantic(
                 f"[Reflexion] {reflection.task_type}: {reflection.root_cause} "
                 f"→ {reflection.improved_strategy}",
@@ -389,7 +433,7 @@ class ReviewerAgent:
                 },
             )
 
-            # PreferenceMemory：存储改进策略偏好
+            # Runtime preference cache: store improved strategy hint.
             if reflection.improved_strategy:
                 self.mm.set_preference(
                     f"review_strategy_{reflection.task_type}",
@@ -418,12 +462,56 @@ class ReviewerAgent:
             "total_issues": total_issues,
             "best_confidence": best_confidence,
             "attempt_history": attempt_history,
+            "best_attempt": max(attempt_history, key=lambda item: item.get("confidence", 0.0)) if attempt_history else {},
+            "issues": (max(attempt_history, key=lambda item: item.get("confidence", 0.0)).get("issues_detail", []) if attempt_history else []),
+            "grounding_stats": (max(attempt_history, key=lambda item: item.get("confidence", 0.0)).get("grounding_stats", {}) if attempt_history else {}),
+            "claim_verification": (max(attempt_history, key=lambda item: item.get("confidence", 0.0)).get("claim_verification", {}) if attempt_history else {}),
+            "skill_trace": (max(attempt_history, key=lambda item: item.get("confidence", 0.0)).get("skill_trace", []) if attempt_history else []),
             "reflexion_summary": (
-                f"{len(attempt_history)} 次尝试，"
-                f"passed={passed}，"
+                f"{len(attempt_history)} attempts, "
+                f"passed={passed}, "
                 f"best_confidence={best_confidence:.2f}"
             ),
         }
+
+    def _serialize_feedback(self, feedback: Any) -> dict[str, Any] | None:
+        if feedback is None:
+            return None
+        if isinstance(feedback, dict):
+            return dict(feedback)
+        if hasattr(feedback, "model_dump"):
+            return feedback.model_dump(mode="json")
+        return {"summary": str(feedback)}
+
+    def _serialize_reflection(self, reflection: SelfReflection) -> dict[str, Any]:
+        return asdict(reflection)
+
+    def _resolve_feedback(self, feedback: Any) -> Any:
+        if not isawaitable(feedback):
+            return feedback
+
+        def _runner() -> Any:
+            return asyncio.run(feedback)
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return _runner()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(_runner).result()
+
+    def _restore_reflections(self, reflections: list[Any]) -> list[SelfReflection]:
+        restored: list[SelfReflection] = []
+        for item in reflections:
+            if isinstance(item, SelfReflection):
+                restored.append(item)
+            elif isinstance(item, dict):
+                try:
+                    restored.append(SelfReflection(**item))
+                except TypeError:
+                    logger.warning("[ReviewerAgent] skipped malformed reflection payload")
+        return restored
 
     def _parse_json(self, text: str) -> dict | None:
         import json
@@ -461,14 +549,14 @@ class ReviewerAgent:
         )
         workflow.add_edge("self_reflect", "actor_review")
         workflow.add_edge("finalize", END)
-        return workflow.compile()
+        return workflow.compile(checkpointer=get_langgraph_checkpointer("reviewer_agent"))
 
     def _retrieve_memory_node(self, state: "ReviewerGraphState") -> dict[str, Any]:
         prior_reflections = self._retrieve_reflections(
             state.get("brief") or {},
             state.get("draft_report"),
         )
-        return {"prior_reflections": prior_reflections}
+        return {"prior_reflections": [self._serialize_reflection(item) for item in prior_reflections]}
 
     def _actor_review_node(self, state: "ReviewerGraphState") -> dict[str, Any]:
         attempt = int(state.get("attempt", 0)) + 1
@@ -477,7 +565,8 @@ class ReviewerAgent:
             brief=state.get("brief") or {},
             paper_cards=list(state.get("paper_cards", [])),
             draft_report=state.get("draft_report"),
-            prior_reflections=list(state.get("prior_reflections", [])),
+            rag_result=state.get("rag_result") or {},
+            prior_reflections=self._restore_reflections(list(state.get("prior_reflections", []))),
             attempt=attempt,
         )
         return {"attempt": attempt, "actor_result": actor_result}
@@ -493,6 +582,12 @@ class ReviewerAgent:
                 "passed": eval_result["passed"],
                 "confidence": actor_result.get("confidence", 0.0),
                 "issues": eval_result.get("issues", []),
+                "issues_detail": (actor_result.get("feedback", {}) or {}).get("issues", []) if isinstance(actor_result.get("feedback"), dict) else [],
+                "grounding_stats": (actor_result.get("claim_verification", {}) or {}).get("grounding_stats", {}),
+                "claim_verification": actor_result.get("claim_verification", {}),
+                "skill_trace": actor_result.get("skill_trace", []),
+                "draft_markdown": actor_result.get("draft_markdown"),
+                "final_report": actor_result.get("final_report"),
             }
         )
         if self.mm:
@@ -535,7 +630,7 @@ class ReviewerAgent:
         )
         if reflection:
             self._store_reflection(reflection)
-            prior_reflections.append(reflection)
+            prior_reflections.append(self._serialize_reflection(reflection))
         return {"prior_reflections": prior_reflections}
 
     def _finalize_node(self, state: "ReviewerGraphState") -> dict[str, Any]:
@@ -546,10 +641,12 @@ class ReviewerAgent:
             "review_passed": passed,
             "review_feedback": self._build_feedback(attempt_history),
             "best_attempt": best_attempt,
+            "claim_verification": best_attempt.get("claim_verification", {}),
+            "skill_trace": best_attempt.get("skill_trace", []),
             "total_attempts": len(attempt_history),
             "reflections_stored": len([item for item in attempt_history if not item.get("passed")]),
             "summary": (
-                f"Reflexion 完成：{len(attempt_history)} 次尝试，"
+                f"Reflexion completed after {len(attempt_history)} attempts, "
                 f"passed={passed}, best_confidence={best_attempt.get('confidence', 0.0):.2f}"
             ),
         }
@@ -559,12 +656,13 @@ class ReviewerGraphState(TypedDict, total=False):
     brief: dict[str, Any]
     paper_cards: list[Any]
     draft_report: Any
+    rag_result: dict[str, Any]
     warnings: list[str]
     attempt: int
     actor_result: dict[str, Any]
     eval_result: dict[str, Any]
     attempt_history: list[dict[str, Any]]
-    prior_reflections: list[SelfReflection]
+    prior_reflections: list[dict[str, Any]]
     review_passed: bool
     review_feedback: dict[str, Any]
     best_attempt: dict[str, Any]
@@ -583,10 +681,23 @@ def run_reviewer_agent(state: dict, inputs: dict) -> dict:
     brief = state.get("brief") or {}
     paper_cards = state.get("paper_cards") or []
     draft_report = state.get("draft_report")
+    rag_result = state.get("rag_result")
+    emitter = inputs.get("_event_emitter")
 
     agent = ReviewerAgent(workspace_id=workspace_id, task_id=task_id)
     try:
-        return agent.run(brief=brief, paper_cards=paper_cards, draft_report=draft_report)
+        if emitter:
+            emitter.on_thinking("review", "Reviewer agent is checking grounding and revision requirements.")
+        result = agent.run(
+            brief=brief,
+            paper_cards=paper_cards,
+            draft_report=draft_report,
+            rag_result=rag_result,
+        )
+        if emitter:
+            passed = result.get("review_passed")
+            emitter.on_thinking("review", f"Review stage completed with review_passed={passed}.")
+        return result
     except Exception as exc:
         logger.exception("[ReviewerAgent] run failed: %s", exc)
         return {

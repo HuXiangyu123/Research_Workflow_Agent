@@ -28,6 +28,7 @@ from typing import Any
 from typing import TypedDict
 
 from langgraph.graph import START, StateGraph
+from src.agent.checkpointing import build_graph_config, get_langgraph_checkpointer
 from src.memory.manager import get_memory_manager
 from src.models.paper import RagResult
 
@@ -37,23 +38,23 @@ logger = logging.getLogger(__name__)
 # ─── TAG Prompt Templates ────────────────────────────────────────────────────
 
 
-AUGMENTED_QUERY_PROMPT = """你是一个查询生成专家。给定研究主题和子问题，按需调用工具增强查询质量。
+AUGMENTED_QUERY_PROMPT = """You are a query generation expert. Given a research topic and sub-questions, use tools only when they improve query quality.
 
-工作方式：
-- 直接生成增强后的查询列表
-- 如需关键词扩展或查询重写，请在 <tools> 标签内说明工具调用
-- 最终只输出 JSON 格式的查询列表
+Working style:
+- Generate the enhanced query list directly.
+- If keyword expansion or query rewriting is needed, describe the tool usage inside the <tools> block.
+- Return only a JSON object containing the query list.
 
 <tools>
-可选工具：expand_keywords(topic, dimension), rewrite_query(query, mode)
+Available tools: expand_keywords(topic, dimension), rewrite_query(query, mode)
 </tools>
 
-输出（严格 JSON）：
+Output (strict JSON):
 ```json
 {{
   "queries": [
     {{
-      "query": "增强后的查询文本",
+      "query": "enhanced query text",
       "sources": ["arxiv", "semantic_scholar"],
       "tools_used": ["expand_keywords"],
       "expected_hits": 20
@@ -64,25 +65,27 @@ AUGMENTED_QUERY_PROMPT = """你是一个查询生成专家。给定研究主题�
 """
 
 
-CONTEXT_ASSEMBLY_PROMPT = """你是一个检索上下文组装专家。
+CONTEXT_ASSEMBLY_PROMPT = """You are a retrieval context assembly expert.
 
-给定以下检索结果（来自多个来源），请直接生成最终的高质量论文候选列表。
+Given retrieval results from multiple sources, produce the final high-quality candidate paper list.
 
-规则：
-1. 去重（相同 arXiv ID 或 URL 只保留一个）
-2. 按相关性排序（标题相关度 > 摘要相关度）
-3. 每条记录必须包含：title, url, abstract(前200字), source
-4. 最终输出直接是 JSON array，不要额外解释
+Rules:
+1. Deduplicate by arXiv ID or URL.
+2. Rank by relevance, prioritizing title match over abstract match.
+3. Each record must contain title, url, abstract (first 200 characters), and source.
+4. Return only a JSON array with no extra explanation.
 
-输出（严格 JSON array）：
+Output (strict JSON array):
 ```json
 [
   {{"rank": 1, "title": "...", "url": "...", "abstract": "...", "source": "arxiv"}},
   ...
 ]
 ```
-数量限制：最多 {max_candidates} 条
+Limit: at most {max_candidates} items.
 """
+
+MAX_PLANNED_QUERIES = 12
 
 
 # ─── RetrieverAgent ──────────────────────────────────────────────────────────
@@ -117,26 +120,90 @@ class RetrieverAgent:
 
     # ── Phase 1: Augmented Query Generation ─────────────────────────────────
 
-    def _augmented_query_gen(self, brief: dict) -> dict[str, Any]:
+    def _queries_from_search_plan(self, search_plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if not isinstance(search_plan, dict):
+            return []
+        groups = search_plan.get("query_groups", [])
+        if not isinstance(groups, list):
+            return []
+
+        source_preferences = search_plan.get("source_preferences", [])
+        if not isinstance(source_preferences, list) or not source_preferences:
+            source_preferences = ["arxiv"]
+
+        grouped_queries: list[list[dict[str, Any]]] = []
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            intent = str(group.get("intent", "exploration") or "exploration")
+            expected_hits = int(group.get("expected_hits", 10) or 10)
+            bucket: list[dict[str, Any]] = []
+            for query in group.get("queries", []) or []:
+                text = str(query or "").strip()
+                if not text:
+                    continue
+                bucket.append(
+                    {
+                        "query": text,
+                        "sources": list(source_preferences),
+                        "tools_used": ["search_plan"],
+                        "expected_hits": expected_hits,
+                        "intent": intent,
+                    }
+                )
+            if bucket:
+                grouped_queries.append(bucket)
+
+        if not grouped_queries:
+            return []
+
+        # Keep broader survey coverage by round-robining across query groups
+        # instead of truncating the plan to the first few exploration queries.
+        queries: list[dict[str, Any]] = []
+        max_queries = min(
+            MAX_PLANNED_QUERIES,
+            sum(len(bucket) for bucket in grouped_queries),
+        )
+        cursor = 0
+        while len(queries) < max_queries:
+            progressed = False
+            for bucket in grouped_queries:
+                if cursor >= len(bucket):
+                    continue
+                queries.append(bucket[cursor])
+                progressed = True
+                if len(queries) >= max_queries:
+                    break
+            if not progressed:
+                break
+            cursor += 1
+        return queries
+
+    def _augmented_query_gen(self, brief: dict, search_plan: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Phase 1: 增强查询生成。
 
         TAG 的关键：LLM 推理时自驱动调用工具，不是预先定义好的调用。
         这里模拟 LLM 自驱动：先问 LLM "需要哪些工具"，然后执行，再继续。
         """
-        from src.agent.llm import build_reason_llm
+        planned_queries = self._queries_from_search_plan(search_plan)
+        if planned_queries:
+            if self.mm:
+                self.mm.add_sensory("augmented_queries", {"queries": planned_queries, "source": "search_plan"})
+            return {"queries": planned_queries, "phase": "augmented_query_gen"}
+
+        from src.agent.llm import build_quick_llm
         from src.agent.settings import get_settings
         from langchain_core.messages import HumanMessage, SystemMessage
-        from src.tools.search_tools import _searxng_search
 
         settings = get_settings()
-        llm = build_reason_llm(settings, max_tokens=4096)
+        llm = build_quick_llm(settings, max_tokens=2048)
 
         topic = brief.get("research_topic") or brief.get("topic", "")
         sub_questions = brief.get("sub_questions", [])
         if isinstance(sub_questions, str):
             sub_questions = [sub_questions]
-        sq_text = "\n".join(f"- {sq}" for sq in sub_questions) if sub_questions else "无"
+        sq_text = "\n".join(f"- {sq}" for sq in sub_questions) if sub_questions else "(none)"
 
         brief_text = f"Topic: {topic}\nSub-questions:\n{sq_text}"
 
@@ -213,6 +280,10 @@ class RetrieverAgent:
         from src.tools.search_tools import _searxng_search
 
         all_results: list[dict] = []
+        query_order = {
+            str(item.get("query", "")): idx
+            for idx, item in enumerate(queries)
+        }
 
         def _retrieve_one(item: dict) -> dict:
             q = item.get("query", "")
@@ -223,6 +294,7 @@ class RetrieverAgent:
             result = _searxng_search(q, engines=engines, max_results=expected_hits)
             result["query"] = q
             result["query_meta"] = item
+            result["query_order"] = query_order.get(q, 0)
             return result
 
         try:
@@ -257,38 +329,52 @@ class RetrieverAgent:
         这里 LLM 直接基于原始检索结果推理，输出去重排序后的 candidate list，
         不经过中间状态转换。
         """
-        from src.agent.llm import build_reason_llm
+        from src.agent.llm import build_quick_llm
         from src.agent.settings import get_settings
         from langchain_core.messages import HumanMessage, SystemMessage
 
         settings = get_settings()
-        llm = build_reason_llm(settings, max_tokens=8192)
+        llm = build_quick_llm(settings, max_tokens=4096)
 
         # 将检索结果整理为 LLM 可读的上下文
         context_lines = []
+        total_hits = 0
         for res in raw_results:
             q = res.get("query", "?")
             hits = res.get("hits", [])
+            total_hits += len(hits)
             sources = res.get("query_meta", {}).get("sources", [])
-            context_lines.append(f"## 查询: {q} (来源: {sources})")
-            for i, hit in enumerate(hits[:10], 1):
+            context_lines.append(f"## Query: {q} (sources: {sources})")
+            for i, hit in enumerate(hits[:6], 1):
                 context_lines.append(
                     f"  [{i}] {hit.get('title', 'Unknown')}\n"
                     f"      URL: {hit.get('url', '')}\n"
-                    f"      摘要: {hit.get('content', '')[:300]}"
+                    f"      Abstract: {hit.get('content', '')[:220]}"
                 )
             context_lines.append("")
 
         context_text = "\n".join(context_lines)
         max_candidates = 30
 
+        # Candidate assembly is a refinement step, not a correctness-critical one.
+        # When retrieval fan-out is already large, prefer deterministic fallback
+        # instead of risking provider throttling on a giant context prompt.
+        if len(context_text) > 15000 or total_hits > 40 or len(raw_results) > 8:
+            logger.info(
+                "[RetrieverAgent] using fallback candidate assembly (context_chars=%d, total_hits=%d, queries=%d)",
+                len(context_text),
+                total_hits,
+                len(raw_results),
+            )
+            return self._fallback_candidates(raw_results)
+
         topic = brief.get("research_topic") or brief.get("topic", "")
 
-        user_prompt = f"""## 研究主题
+        user_prompt = f"""## Research Topic
 
 {topic}
 
-## 检索结果上下文
+## Retrieval Context
 
 {context_text}
 
@@ -297,7 +383,7 @@ class RetrieverAgent:
 
         try:
             resp = llm.invoke([
-                SystemMessage(content="你是一个检索结果组装专家。直接输出 JSON，不要解释。"),
+                SystemMessage(content="You are a retrieval result assembly expert. Return JSON only with no explanation."),
                 HumanMessage(content=user_prompt),
             ])
             raw = resp.content if hasattr(resp, "content") else str(resp)
@@ -326,7 +412,8 @@ class RetrieverAgent:
                 "brief": brief,
                 "search_plan": search_plan or {},
                 "warnings": [],
-            }
+            },
+            config=build_graph_config("retriever_agent"),
         )
         rag_result = result.get("rag_result")
         candidates = []
@@ -350,30 +437,48 @@ class RetrieverAgent:
 
     def _fallback_candidates(self, raw_results: list[dict]) -> list[dict]:
         """从 raw results 直接提取 candidate（当 context_assembly 失败时）。"""
+        from src.tools.arxiv_api import enrich_search_results_with_arxiv
+
+        normalized_results = sorted(
+            list(raw_results),
+            key=lambda item: int(item.get("query_order", 0) or 0),
+        )
         seen_urls: set[str] = set()
         candidates: list[dict] = []
         rank = 1
+        hit_queues: list[list[dict[str, Any]]] = [
+            list(result.get("hits", []))
+            for result in normalized_results
+        ]
 
-        for res in raw_results:
-            for hit in res.get("hits", []):
-                url = hit.get("url", "")
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                candidates.append({
-                    "rank": rank,
-                    "title": hit.get("title", ""),
-                    "url": url,
-                    "abstract": hit.get("content", "")[:500],
-                    "source": hit.get("engine", "arxiv"),
-                })
-                rank += 1
+        while hit_queues and rank <= 30:
+            progressed = False
+            for idx, queue in enumerate(hit_queues):
+                while queue:
+                    hit = queue.pop(0)
+                    url = hit.get("url", "")
+                    if not url or url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    source_result = normalized_results[idx]
+                    candidates.append({
+                        "rank": rank,
+                        "title": hit.get("title", ""),
+                        "url": url,
+                        "abstract": hit.get("content", "")[:500],
+                        "source": hit.get("engine", "arxiv"),
+                        "published_date": hit.get("publishedDate"),
+                        "query": source_result.get("query", ""),
+                    })
+                    rank += 1
+                    progressed = True
+                    break
                 if rank > 30:
                     break
-            if rank > 30:
+            if not progressed:
                 break
 
-        return candidates
+        return enrich_search_results_with_arxiv(candidates)
 
     # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -419,10 +524,13 @@ class RetrieverAgent:
         workflow.add_edge("augmented_query_gen", "parallel_retrieval")
         workflow.add_edge("parallel_retrieval", "context_assembly")
         workflow.add_edge("context_assembly", "finalize_rag_result")
-        return workflow.compile()
+        return workflow.compile(checkpointer=get_langgraph_checkpointer("retriever_agent"))
 
     def _query_node(self, state: "RetrieverGraphState") -> dict[str, Any]:
-        result = self._augmented_query_gen(state.get("brief") or {})
+        result = self._augmented_query_gen(
+            state.get("brief") or {},
+            state.get("search_plan") or {},
+        )
         queries = list(result.get("queries", []))
         if self.mm:
             self.mm.add_sensory(
@@ -474,9 +582,17 @@ class RetrieverAgent:
         raw_results: list[dict[str, Any]],
         candidates: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        from src.research.graph.nodes.search import _ingest_paper_candidates
+        from src.research.graph.nodes.search import (
+            _ingest_paper_candidates,
+            _rerank_and_filter_candidates,
+        )
 
         query = search_plan.get("plan_goal") or brief.get("research_topic") or brief.get("topic", "")
+        candidates, rerank_log = _rerank_and_filter_candidates(
+            candidates,
+            brief=brief,
+            search_plan=search_plan,
+        )
         query_traces = []
         for result in raw_results:
             query_traces.append(
@@ -495,9 +611,9 @@ class RetrieverAgent:
             evidence_chunks=[],
             retrieval_trace=query_traces,
             dedup_log=[{"strategy": "url/title", "total": len(candidates), "unique": len(candidates)}],
-            rerank_log=[],
+            rerank_log=rerank_log,
             coverage_notes=[
-                f"TAG agent 执行 {len(raw_results)} 组检索，组装出 {len(candidates)} 篇候选论文",
+                f"TAG agent 执行 {len(raw_results)} 组检索，二次筛选后保留 {len(candidates)} 篇候选论文",
             ],
             total_papers=len(candidates),
             total_chunks=0,
@@ -531,10 +647,21 @@ def run_retriever_agent(state: dict, inputs: dict) -> dict:
     task_id = inputs.get("task_id") or state.get("task_id")
     brief = state.get("brief") or inputs.get("brief", {})
     search_plan = state.get("search_plan")
+    emitter = inputs.get("_event_emitter")
 
     agent = RetrieverAgent(workspace_id=workspace_id, task_id=task_id)
     try:
-        return agent.run(brief=brief, search_plan=search_plan)
+        if emitter:
+            emitter.on_thinking("search", "Retriever agent is executing diversified retrieval over the planned queries.")
+        result = agent.run(brief=brief, search_plan=search_plan)
+        if emitter:
+            rag_result = result.get("rag_result") if isinstance(result, dict) else None
+            if isinstance(rag_result, dict):
+                paper_count = len(rag_result.get("paper_candidates", []) or [])
+            else:
+                paper_count = len(getattr(rag_result, "paper_candidates", []) or [])
+            emitter.on_thinking("search", f"Retriever kept {paper_count} paper candidates after reranking.")
+        return result
     except Exception as exc:
         logger.exception("[RetrieverAgent] run failed: %s", exc)
         return {

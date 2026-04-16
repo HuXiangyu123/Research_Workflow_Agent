@@ -1,20 +1,40 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { ReportMode, SourceType, WorkflowMode } from '../types/task';
 
 interface Props {
   onTaskCreated: (taskId: string, sourceType: SourceType) => void;
   workflowMode: WorkflowMode;
   onWorkflowModeChange: (mode: WorkflowMode) => void;
+  workspaceId?: string | null;
 }
 
 export function TaskSubmitForm({
   onTaskCreated,
   workflowMode,
   onWorkflowModeChange,
+  workspaceId,
 }: Props) {
   const [input, setInput] = useState('');
   const [reportMode, setReportMode] = useState<ReportMode>('draft');
   const [loading, setLoading] = useState(false);
+  const [autoFill, setAutoFill] = useState(false);
+  const [reuseWorkspace, setReuseWorkspace] = useState(false);
+
+  // Load auto_fill from Phase4Config
+  useEffect(() => {
+    fetch('/api/v1/config/phase4')
+      .then(r => r.json())
+      .then(d => {
+        if (d.config?.auto_fill !== undefined) {
+          setAutoFill(d.config.auto_fill);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setReuseWorkspace(Boolean(workspaceId));
+  }, [workspaceId]);
 
   const activeSourceType: SourceType = workflowMode === 'research' ? 'research' : 'arxiv';
 
@@ -29,6 +49,8 @@ export function TaskSubmitForm({
         input_value: input.trim(),
         source_type: activeSourceType,
         report_mode: reportMode,
+        auto_fill: autoFill,
+        workspace_id: workflowMode === 'research' && reuseWorkspace ? workspaceId : undefined,
       };
 
       const resp = await fetch('/tasks', {
@@ -59,6 +81,8 @@ export function TaskSubmitForm({
         input_value: text,
         source_type: sourceType,
         report_mode: reportMode,
+        auto_fill: autoFill,
+        workspace_id: workflowMode === 'research' && reuseWorkspace ? workspaceId : undefined,
       };
 
       const resp = await fetch('/tasks', {
@@ -117,6 +141,39 @@ export function TaskSubmitForm({
           </button>
         </div>
       </div>
+
+      {workflowMode === 'research' && (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="auto-fill-check"
+              checked={autoFill}
+              onChange={e => setAutoFill(e.target.checked)}
+              className="h-4 w-4 rounded border-stone-400 text-[#0e7490] focus:ring-[#0e7490]/30"
+              disabled={loading}
+            />
+            <label htmlFor="auto-fill-check" className="text-xs text-stone-600 cursor-pointer">
+              Auto-fill ambiguous fields (LLM completes instead of asking)
+            </label>
+          </div>
+          {workspaceId && (
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="reuse-workspace-check"
+                checked={reuseWorkspace}
+                onChange={e => setReuseWorkspace(e.target.checked)}
+                className="h-4 w-4 rounded border-stone-400 text-[#1e3a5f] focus:ring-[#1e3a5f]/30"
+                disabled={loading}
+              />
+              <label htmlFor="reuse-workspace-check" className="text-xs text-stone-600 cursor-pointer">
+                Continue in workspace <span className="font-mono">{workspaceId}</span>
+              </label>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="min-w-[240px] flex-1">
         <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-stone-600">

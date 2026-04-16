@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { SourceType } from '../types/task';
 
-interface TaskSummary {
-  task_id: string;
+interface WorkspaceSummary {
+  workspace_id: string;
+  latest_task_id?: string | null;
   status: string;
-  created_at: string;
+  updated_at?: string | null;
+  current_stage?: string | null;
   source_type?: SourceType;
+  report_mode?: string | null;
 }
 
 interface Props {
@@ -14,49 +17,64 @@ interface Props {
 }
 
 export function TaskHistory({ onSelect, refreshTrigger }: Props) {
-  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
 
   useEffect(() => {
-    fetch('/tasks')
+    fetch('/api/v1/workspaces')
       .then(r => r.json())
-      .then(setTasks)
+      .then(data => setWorkspaces(data.items ?? []))
       .catch(() => {});
   }, [refreshTrigger]);
 
-  if (tasks.length === 0) return null;
+  if (workspaces.length === 0) return null;
 
   return (
     <div className="space-y-1">
       <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wider px-1">
-        History
+        Workspaces
       </h3>
-      {tasks.map(t => (
+      {workspaces.map(workspace => {
+        const latestTaskId = workspace.latest_task_id ?? undefined;
+        const disabled = !latestTaskId;
+        return (
         <button
-          key={t.task_id}
-          onClick={() => onSelect(t.task_id, t.source_type)}
-          className="w-full text-left px-3 py-2 rounded-lg border border-transparent hover:bg-white hover:border-stone-200 hover:shadow-sm transition-all text-sm"
+          key={workspace.workspace_id}
+          onClick={() => latestTaskId && onSelect(latestTaskId, workspace.source_type)}
+          disabled={disabled}
+          className={`w-full text-left px-3 py-2 rounded-lg border border-transparent transition-all text-sm ${
+            disabled
+              ? 'cursor-not-allowed opacity-60'
+              : 'hover:bg-white hover:border-stone-200 hover:shadow-sm'
+          }`}
         >
-          <span className="text-stone-800 font-mono text-xs">{t.task_id.slice(0, 8)}…</span>
-          {t.source_type && (
+          <span className="text-stone-800 font-mono text-xs">{workspace.workspace_id.slice(0, 22)}…</span>
+          {workspace.source_type && (
             <span className="ml-2 rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-600">
-              {t.source_type === 'research' ? 'research' : 'report'}
+              {workspace.source_type === 'research' ? 'research' : 'report'}
             </span>
           )}
           <span
             className={`ml-2 text-xs font-medium ${
-              t.status === 'completed'
+              workspace.status === 'completed'
                 ? 'text-[#166534]'
-                : t.status === 'failed'
+                : workspace.status === 'failed'
                   ? 'text-[#b91c1c]'
-                  : t.status === 'running'
+                  : workspace.status === 'running'
                     ? 'text-[#1e40af]'
                     : 'text-stone-500'
             }`}
           >
-            {t.status}
+            {workspace.status}
           </span>
+          {workspace.current_stage && (
+            <p className="mt-1 text-[11px] text-stone-500">stage: {workspace.current_stage}</p>
+          )}
+          {latestTaskId && (
+            <p className="mt-1 font-mono text-[10px] text-stone-400">task {latestTaskId.slice(0, 8)}…</p>
+          )}
         </button>
-      ))}
+        );
+      })}
     </div>
   );
 }

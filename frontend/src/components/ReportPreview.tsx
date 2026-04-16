@@ -7,10 +7,25 @@ interface Props {
   taskId: string | null;
   isDone: boolean;
   sourceType?: SourceType | null;
+  workspaceId?: string | null;
+  liveMarkdown?: string | null;
+  liveArtifactName?: string | null;
+  currentStage?: string | null;
+  taskStatus?: Task['status'] | null;
   onTaskCreated: (taskId: string, sourceType: SourceType) => void;
 }
 
-export function ReportPreview({ taskId, isDone, sourceType, onTaskCreated }: Props) {
+export function ReportPreview({
+  taskId,
+  isDone,
+  sourceType,
+  workspaceId,
+  liveMarkdown,
+  liveArtifactName,
+  currentStage,
+  taskStatus,
+  onTaskCreated,
+}: Props) {
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -51,6 +66,34 @@ export function ReportPreview({ taskId, isDone, sourceType, onTaskCreated }: Pro
   }
 
   if (!isDone) {
+    if (liveMarkdown) {
+      return (
+        <div className="max-h-[600px] overflow-y-auto rounded-xl border border-stone-300 bg-white p-8 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800">
+              live preview
+            </span>
+            {liveArtifactName && (
+              <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
+                source: {liveArtifactName}
+              </span>
+            )}
+            {currentStage && (
+              <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
+                stage: {currentStage}
+              </span>
+            )}
+            {workspaceId && (
+              <span className="rounded-full bg-stone-100 px-2.5 py-1 font-mono text-stone-600">
+                {workspaceId}
+              </span>
+            )}
+          </div>
+          <MarkdownRenderer content={liveMarkdown} />
+        </div>
+      );
+    }
+
     return (
       <div className="rounded-xl border border-stone-300 bg-white p-8 text-center text-stone-500 shadow-sm">
         <p className="text-sm animate-pulse">
@@ -58,6 +101,13 @@ export function ReportPreview({ taskId, isDone, sourceType, onTaskCreated }: Pro
             ? 'Research brief and search plan will appear when the workflow finishes…'
             : 'Report will appear when the pipeline finishes…'}
         </p>
+        {(currentStage || taskStatus) && (
+          <p className="mt-3 text-xs text-stone-400">
+            {[taskStatus ? `status: ${taskStatus}` : null, currentStage ? `stage: ${currentStage}` : null]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+        )}
       </div>
     );
   }
@@ -78,6 +128,11 @@ export function ReportPreview({ taskId, isDone, sourceType, onTaskCreated }: Pro
           <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
             mode: research
           </span>
+          {workspaceId && (
+            <span className="rounded-full bg-stone-100 px-2.5 py-1 font-mono text-stone-600">
+              {workspaceId}
+            </span>
+          )}
           {task?.current_stage && (
             <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
               stage: {task.current_stage}
@@ -226,6 +281,11 @@ export function ReportPreview({ taskId, isDone, sourceType, onTaskCreated }: Pro
           <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
             mode: {task.report_mode ?? 'draft'}
           </span>
+          {workspaceId && (
+            <span className="rounded-full bg-stone-100 px-2.5 py-1 font-mono text-stone-600">
+              {workspaceId}
+            </span>
+          )}
           <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
             paper: {task.paper_type ?? 'regular'}
           </span>

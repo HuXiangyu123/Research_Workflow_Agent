@@ -22,6 +22,7 @@ from typing import Any
 from typing import TypedDict
 
 from langgraph.graph import START, StateGraph
+from src.agent.checkpointing import build_graph_config, get_langgraph_checkpointer
 from src.memory.manager import get_memory_manager
 
 logger = logging.getLogger(__name__)
@@ -30,68 +31,67 @@ logger = logging.getLogger(__name__)
 # ─── Prompt Templates ───────────────────────────────────────────────────────
 
 
-PLAN_PHASE_PROMPT = """你是一个研究规划专家（Research Planner）。
+PLAN_PHASE_PROMPT = """You are a research planning expert.
 
-给定以下 ResearchBrief，请一次性生成完整的多阶段 SearchPlan。
+Given the ResearchBrief below, generate a complete multi-stage SearchPlan in one pass.
 
-**输出要求（严格 JSON）：**
+Output requirements (strict JSON):
 ```json
 {{
-  "plan_goal": "本轮搜索的核心目标（1 句话）",
+  "plan_goal": "One-sentence goal for this search run",
   "query_groups": [
     {{
-      "group_id": "探索阶段",
-      "queries": ["查询1", "查询2", "..."],
+      "group_id": "exploration_stage",
+      "queries": ["query 1", "query 2", "..."],
       "intent": "exploration",
       "priority": 1,
       "expected_hits": 20,
-      "notes": "探索方向说明"
+      "notes": "Why this stage exists"
     }},
     {{
-      "group_id": "精化阶段",
-      "queries": ["查询1", "查询2", "..."],
+      "group_id": "refinement_stage",
+      "queries": ["query 1", "query 2", "..."],
       "intent": "refinement",
       "priority": 2,
       "expected_hits": 15,
-      "notes": "精化方向说明"
+      "notes": "How this stage narrows the search"
     }},
     {{
-      "group_id": "验证阶段",
-      "queries": ["查询1", "..."],
+      "group_id": "validation_stage",
+      "queries": ["query 1", "..."],
       "intent": "validation",
       "priority": 3,
       "expected_hits": 10,
-      "notes": "验证方向说明"
+      "notes": "How this stage checks coverage or gaps"
     }}
   ],
   "source_preferences": ["arxiv", "semantic_scholar"],
-  "coverage_notes": "本计划的预期覆盖说明"
+  "coverage_notes": "Expected coverage and known blind spots"
 }}
 ```
 
-规则：
-- query_groups 数量：2-4 个，不要超过 4 个
-- 每个 query 长度：5-15 个词，不要太长
-- 必须覆盖：研究主题 + 方法 + 数据集 + 应用
-- expected_hits 是预期返回数量，不是必须达到
+Rules:
+- Use 2-4 query groups, never more than 4.
+- Keep each query between 5 and 15 words.
+- Cover the research topic, methods, datasets, and applications.
+- expected_hits is an estimate, not a hard requirement.
 """
 
-EXECUTE_PHASE_SYSTEM = """你是一个执行验证专家（Executor Validator）。
+EXECUTE_PHASE_SYSTEM = """You are an execution validator.
 
-给定原始 ResearchBrief、生成的 SearchPlan，以及当前的执行结果，
-请判断：
-1. 当前进度是否满足计划目标
-2. 是否需要调整后续查询
-3. 是否应该停止
+Given the ResearchBrief, the generated SearchPlan, and the current execution results, decide:
+1. whether current progress satisfies the plan goal,
+2. whether downstream queries should be adjusted,
+3. whether execution should stop.
 
-输出（严格 JSON）：
+Output (strict JSON):
 ```json
 {{
   "status": "on_track | deviation | complete | stuck",
-  "current_coverage": "当前覆盖说明",
-  "adjustments": ["调整1", "调整2"],
-  "should_stop": true或false,
-  "stop_reason": "停止原因（如有）"
+  "current_coverage": "Coverage summary",
+  "adjustments": ["Adjustment 1", "Adjustment 2"],
+  "should_stop": true,
+  "stop_reason": "Reason for stopping if applicable"
 }}
 ```
 """
@@ -119,12 +119,40 @@ class PlanAndExecutePhase:
         if len(self.executed_queries) >= len(self.queries):
             self.completed = True
 
+    def to_payload(self) -> dict[str, Any]:
+        """Convert runtime phase state into a checkpoint-safe dict."""
+        return {
+            "group_id": self.group_id,
+            "queries": list(self.queries),
+            "intent": self.intent,
+            "priority": self.priority,
+            "expected_hits": self.expected_hits,
+            "executed_queries": list(self.executed_queries),
+            "query_results": list(self.query_results),
+            "completed": self.completed,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> PlanAndExecutePhase:
+        """Restore a runtime phase object from checkpoint-safe state."""
+        phase = cls(
+            group_id=str(payload.get("group_id", "")),
+            queries=[str(item) for item in payload.get("queries", [])],
+            intent=str(payload.get("intent", "")),
+            priority=int(payload.get("priority", 0) or 0),
+            expected_hits=int(payload.get("expected_hits", 0) or 0),
+        )
+        phase.executed_queries = [str(item) for item in payload.get("executed_queries", [])]
+        phase.query_results = list(payload.get("query_results", []))
+        phase.completed = bool(payload.get("completed", False))
+        return phase
+
 
 class PlannerGraphState(TypedDict, total=False):
     brief: dict[str, Any]
     warnings: list[str]
-    plan: Any
-    phases: list[PlanAndExecutePhase]
+    plan: dict[str, Any] | None
+    phases: list[Any]
     search_plan: dict[str, Any] | None
     candidates: list[dict[str, Any]]
     execution_log: list[dict[str, Any]]
@@ -190,11 +218,11 @@ class PlannerAgent:
 
 {brief_text}
 
-## 历史记忆（参考）
+## Historical Memory (Reference Only)
 
-{memory_context or '（无）'}
+{memory_context or '(none)'}
 
-请根据以上信息，生成完整的多阶段搜索计划。"""
+Generate the complete multi-stage search plan from the context above."""
 
         try:
             resp = llm.invoke([
@@ -205,7 +233,7 @@ class PlannerAgent:
             plan_data = self._parse_json(raw)
 
             if plan_data:
-                plan = SearchPlan.model_validate(plan_data)
+                plan = SearchPlan.model_validate(self._coerce_plan_payload(plan_data))
                 self._store_plan_memory(plan, brief)
                 return {
                     "plan": plan,
@@ -230,7 +258,7 @@ class PlannerAgent:
 
     # ── Execute Phase ─────────────────────────────────────────────────────
 
-    def execute_phase(self, phases: list[PlanAndExecutePhase]) -> dict[str, Any]:
+    def execute_phase(self, phases: list[Any]) -> dict[str, Any]:
         """
         EXECUTE PHASE：按 priority 顺序执行每个阶段的 queries。
 
@@ -245,13 +273,15 @@ class PlannerAgent:
         seen_urls: set[str] = set()
         execution_log: list[dict] = []
 
-        for phase in phases:
+        normalized_phases = self._restore_phases(phases)
+
+        for phase in normalized_phases:
             if phase.completed:
                 continue
 
             logger.info("[PlannerAgent.execute] phase=%s, queries=%d", phase.group_id, len(phase.queries))
 
-            # SensoryMemory: 记录阶段开始
+            # Runtime event buffer: record phase start.
             if self.mm:
                 self.mm.add_sensory(
                     "phase_start",
@@ -285,7 +315,7 @@ class PlannerAgent:
                     else:
                         phase.mark_executed(query, {"ok": False, "error": result.get("error", "")})
 
-                    # SensoryMemory: 记录每条查询结果
+                    # Runtime event buffer: record each query result.
                     if self.mm:
                         self.mm.add_tool_output("searxng", {"query": query, "result": result})
 
@@ -293,7 +323,7 @@ class PlannerAgent:
                     logger.warning("[PlannerAgent.execute] query '%s' failed: %s", query, exc)
                     phase.mark_executed(query, {"ok": False, "error": str(exc)})
 
-            # 每个阶段完成后记录 SemanticMemory
+            # Runtime vector cache: record phase summary.
             if self.mm:
                 self.mm.add_semantic(
                     f"完成搜索阶段: {phase.group_id}，intent={phase.intent}，queries={len(phase.executed_queries)}",
@@ -340,15 +370,15 @@ class PlannerAgent:
 
 {brief_text}
 
-## SearchPlan 目标
+        ## SearchPlan Goal
 
 {plan_goal}
 
-## 执行结果摘要
+## Execution Summary
 
 {execution_summary}
 
-请验证执行结果是否满足 SearchPlan 目标。"""
+Validate whether the execution results satisfy the SearchPlan goal."""
 
         try:
             resp = llm.invoke([
@@ -382,7 +412,10 @@ class PlannerAgent:
         流程：plan_phase → execute_phase → validate_phase
         """
         logger.info("[PlannerAgent] Starting Plan-and-Execute pipeline via LangGraph")
-        result = self.build_graph().invoke({"brief": brief, "warnings": []})
+        result = self.build_graph().invoke(
+            {"brief": brief, "warnings": []},
+            config=build_graph_config("planner_agent"),
+        )
         candidates = list(result.get("candidates", []))
         return {
             "search_plan": result.get("search_plan"),
@@ -411,6 +444,76 @@ class PlannerAgent:
         # 按 priority 排序
         phases.sort(key=lambda p: p.priority)
         return phases
+
+    def _coerce_plan_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Normalize minor schema drift from the planner LLM before validation."""
+        normalized = dict(payload)
+        raw_groups = payload.get("query_groups", [])
+        groups: list[dict[str, Any]] = []
+
+        for idx, raw_group in enumerate(raw_groups[:4]):
+            if not isinstance(raw_group, dict):
+                continue
+
+            group = dict(raw_group)
+            queries = group.get("queries", [])
+            if not isinstance(queries, list):
+                queries = [queries] if queries else []
+
+            try:
+                raw_priority = group.get("priority", idx + 1)
+                priority = int(raw_priority if raw_priority is not None else idx + 1)
+            except (TypeError, ValueError):
+                priority = idx + 1
+
+            try:
+                raw_expected_hits = group.get("expected_hits", 10)
+                expected_hits = int(raw_expected_hits if raw_expected_hits is not None else 10)
+            except (TypeError, ValueError):
+                expected_hits = 10
+
+            groups.append(
+                {
+                    **group,
+                    "group_id": str(group.get("group_id") or f"group_{idx + 1}"),
+                    "queries": [str(query).strip() for query in queries if str(query).strip()][:8],
+                    "intent": str(group.get("intent") or "exploration"),
+                    "priority": min(3, max(1, priority)),
+                    "expected_hits": min(50, max(1, expected_hits)),
+                }
+            )
+
+        normalized["query_groups"] = groups
+        return normalized
+
+    def _serialize_plan(self, plan: Any) -> dict[str, Any] | None:
+        if plan is None:
+            return None
+        if isinstance(plan, dict):
+            return dict(plan)
+        if hasattr(plan, "model_dump"):
+            return plan.model_dump(mode="json")
+        return {"plan_goal": str(plan)}
+
+    def _serialize_phases(self, phases: list[Any]) -> list[Any]:
+        payloads: list[Any] = []
+        for phase in phases:
+            if isinstance(phase, PlanAndExecutePhase):
+                payloads.append(phase.to_payload())
+            elif isinstance(phase, dict):
+                payloads.append(dict(phase))
+            else:
+                payloads.append(phase)
+        return payloads
+
+    def _restore_phases(self, phases: list[Any]) -> list[PlanAndExecutePhase]:
+        restored: list[PlanAndExecutePhase] = []
+        for phase in phases:
+            if isinstance(phase, PlanAndExecutePhase):
+                restored.append(phase)
+            elif isinstance(phase, dict):
+                restored.append(PlanAndExecutePhase.from_payload(phase))
+        return restored
 
     def _serialize_brief(self, brief: dict) -> str:
         import json
@@ -471,17 +574,18 @@ class PlannerAgent:
         workflow.add_edge(START, "plan")
         workflow.add_edge("plan", "execute")
         workflow.add_edge("execute", "validate")
-        return workflow.compile()
+        return workflow.compile(checkpointer=get_langgraph_checkpointer("planner_agent"))
 
     def _plan_node(self, state: PlannerGraphState) -> dict[str, Any]:
         result = self.plan_phase(state.get("brief") or {})
         plan = result.get("plan")
         warnings = list(state.get("warnings", []))
         warnings.extend(result.get("warnings", []))
+        serialized_plan = self._serialize_plan(plan)
         return {
-            "plan": plan,
-            "phases": list(result.get("phases", [])),
-            "search_plan": plan.model_dump(mode="json") if hasattr(plan, "model_dump") else plan,
+            "plan": serialized_plan,
+            "phases": self._serialize_phases(list(result.get("phases", []))),
+            "search_plan": serialized_plan,
             "warnings": warnings,
         }
 
@@ -495,7 +599,7 @@ class PlannerAgent:
         }
 
     def _validate_node(self, state: PlannerGraphState) -> dict[str, Any]:
-        plan = state.get("plan")
+        plan = state.get("search_plan") or state.get("plan")
         execution_results = state.get("execution_results") or {
             "candidates": state.get("candidates", []),
             "execution_log": state.get("execution_log", []),
@@ -505,7 +609,16 @@ class PlannerAgent:
             warnings.append("Planner graph reached validation without a plan.")
             return {"validation": {"status": "missing_plan"}, "warnings": warnings}
 
-        result = self.validate_phase(state.get("brief") or {}, plan, execution_results)
+        runtime_plan = plan
+        if isinstance(plan, dict):
+            try:
+                from src.models.research import SearchPlan
+
+                runtime_plan = SearchPlan.model_validate(plan)
+            except Exception:
+                runtime_plan = plan
+
+        result = self.validate_phase(state.get("brief") or {}, runtime_plan, execution_results)
         return {
             "validation": result.get("validation", {}),
             "candidates": list(result.get("candidates", [])),
@@ -521,10 +634,17 @@ def run_planner_agent(state: dict, inputs: dict) -> dict:
     workspace_id = inputs.get("workspace_id") or state.get("workspace_id")
     task_id = inputs.get("task_id") or state.get("task_id")
     brief = state.get("brief") or inputs.get("brief", {})
+    emitter = inputs.get("_event_emitter")
 
     agent = PlannerAgent(workspace_id=workspace_id, task_id=task_id)
     try:
-        return agent.run(brief=brief)
+        if emitter:
+            emitter.on_thinking("search_plan", "Planner agent is expanding the brief into executable search phases.")
+        result = agent.run(brief=brief)
+        if emitter and result.get("search_plan"):
+            query_groups = result.get("search_plan", {}).get("query_groups", [])
+            emitter.on_thinking("search_plan", f"Planner produced {len(query_groups)} query groups.")
+        return result
     except Exception as exc:
         logger.exception("[PlannerAgent] run failed: %s", exc)
         return {

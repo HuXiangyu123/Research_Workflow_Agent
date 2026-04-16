@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -22,6 +23,22 @@ from src.db.task_persistence import (
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 _tasks: dict[str, TaskRecord] = {}
+_STREAMABLE_TASK_FILES = {
+    "brief.json",
+    "search_plan.json",
+    "rag_result.json",
+    "paper_cards.json",
+    "comparison_matrix.json",
+    "writing_scaffold.json",
+    "writing_outline.json",
+    "mcp_prompt_payload.json",
+    "draft_skill_trace.json",
+    "review_skill_trace.json",
+    "claim_verification.json",
+    "review_feedback.json",
+    "draft.md",
+    "report.md",
+}
 
 
 class CreateTaskRequest(BaseModel):
@@ -31,6 +48,14 @@ class CreateTaskRequest(BaseModel):
     source_type: str = Field(
         default="arxiv",
         description="'arxiv', 'pdf' (paper-ingestion) or 'research' (clarify workflow)",
+    )
+    workspace_id: str | None = Field(
+        default=None,
+        description="Optional existing workspace_id to attach this task to",
+    )
+    auto_fill: bool = Field(
+        default=False,
+        description="If True, LLM auto-completes ambiguous fields in brief instead of requiring human followup",
     )
 
 
@@ -98,6 +123,8 @@ def _task_payload(task: TaskRecord) -> dict:
         "search_plan": task.search_plan,
         "rag_result": task.rag_result,
         "paper_cards": task.paper_cards,
+        "compression_result": task.compression_result,
+        "taxonomy": task.taxonomy,
         "draft_report": task.draft_report,
         "review_feedback": task.review_feedback,
         "review_passed": task.review_passed,
@@ -107,6 +134,8 @@ def _task_payload(task: TaskRecord) -> dict:
         "supervisor_mode": task.supervisor_mode,
         "current_stage": task.current_stage,
         "followup_hints": task.followup_hints,
+        "awaiting_followup": task.awaiting_followup,
+        "followup_resolution": task.followup_resolution,
         "chat_history": task.chat_history,
         "error": task.error,
         "persisted_to_db": task.persisted_to_db,
@@ -115,14 +144,97 @@ def _task_payload(task: TaskRecord) -> dict:
     }
 
 
+def _task_workspace_dir(task: TaskRecord) -> Path | None:
+    if not task.workspace_id:
+        return None
+    from src.agent.output_workspace import get_workspace_path
+
+    path = get_workspace_path(task.task_id, workspace_id=task.workspace_id)
+    return path if path.is_dir() else None
+
+
+def _workspace_stream_events(
+    task: TaskRecord,
+    seen_files: dict[str, int],
+) -> list[dict]:
+    from datetime import datetime, timezone
+
+    task_dir = _task_workspace_dir(task)
+    if task_dir is None:
+        return []
+
+    candidate_paths = [
+        path
+        for path in (task_dir / name for name in sorted(_STREAMABLE_TASK_FILES))
+        if path.is_file()
+    ]
+    revisions_dir = task_dir / "revisions"
+    if revisions_dir.is_dir():
+        candidate_paths.extend(sorted(revisions_dir.glob("*.md")))
+
+    events: list[dict] = []
+    for path in candidate_paths:
+        rel_path = str(path.relative_to(task_dir))
+        mtime_ns = path.stat().st_mtime_ns
+        if seen_files.get(rel_path) == mtime_ns:
+            continue
+        seen_files[rel_path] = mtime_ns
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        if path.suffix == ".md":
+            try:
+                content = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            events.append(
+                {
+                    "type": "report_snapshot",
+                    "artifact_name": rel_path,
+                    "workspace_id": task.workspace_id,
+                    "timestamp": timestamp,
+                    "content": content,
+                    "is_final": path.name == "report.md",
+                }
+            )
+            continue
+
+        summary = path.name
+        if path.suffix == ".json":
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    summary = ", ".join(list(payload.keys())[:4]) or path.name
+                elif isinstance(payload, list):
+                    summary = f"{len(payload)} items"
+            except Exception:
+                summary = path.name
+
+        events.append(
+            {
+                "type": "artifact_ready",
+                "artifact_name": rel_path,
+                "workspace_id": task.workspace_id,
+                "timestamp": timestamp,
+                "summary": summary,
+            }
+        )
+    return events
+
+
 @router.post("", response_model=CreateTaskResponse)
 async def create_task(req: CreateTaskRequest) -> CreateTaskResponse:
+    from src.agent.output_workspace import DEFAULT_WORKSPACE_USER, build_workspace_id
+
     source_type = req.source_type if req.source_type in {"arxiv", "pdf", "research"} else "arxiv"
+    workspace_user = DEFAULT_WORKSPACE_USER or "user"
+    workspace_id = (req.workspace_id or "").strip() or build_workspace_id(workspace_user)
     task = TaskRecord(
         input_type=req.input_type,
         input_value=req.input_value,
         report_mode=req.report_mode if req.report_mode in {"draft", "full"} else "draft",
         source_type=source_type,
+        auto_fill=req.auto_fill,
+        workspace_id=workspace_id,
     )
     _tasks[task.task_id] = task
     _sync_task_snapshot(task)
@@ -189,6 +301,8 @@ async def get_task_result(task_id: str):
         "search_plan": task.search_plan,
         "rag_result": task.rag_result,
         "paper_cards": task.paper_cards,
+        "compression_result": task.compression_result,
+        "taxonomy": task.taxonomy,
         "draft_report": task.draft_report,
         "review_feedback": task.review_feedback,
         "review_passed": task.review_passed,
@@ -196,6 +310,8 @@ async def get_task_result(task_id: str):
         "artifact_count": task.artifact_count,
         "collaboration_trace": task.collaboration_trace,
         "supervisor_mode": task.supervisor_mode,
+        "awaiting_followup": task.awaiting_followup,
+        "followup_resolution": task.followup_resolution,
     }
 
 
@@ -257,11 +373,15 @@ async def task_events_sse(task_id: str):
 
     async def event_stream():
         last_idx = 0
+        seen_files: dict[str, int] = {}
         while True:
             while last_idx < len(task.node_events):
                 event = task.node_events[last_idx]
                 yield f"data: {json.dumps(event)}\n\n"
                 last_idx += 1
+
+            for event in _workspace_stream_events(task, seen_files):
+                yield f"data: {json.dumps(event)}\n\n"
 
             if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                 yield f"data: {json.dumps({'type': 'done', 'status': task.status.value})}\n\n"
@@ -322,16 +442,23 @@ def _append_supervisor_trace_events(node_events: list, trace: list[dict]) -> Non
         })
 
 
-def _run_supervisor_sync(supervisor, initial_state: dict, *, use_handoff: bool) -> dict:
+def _run_supervisor_sync(
+    supervisor,
+    initial_state: dict,
+    *,
+    use_handoff: bool,
+    inputs: dict | None = None,
+) -> dict:
     """Run the async supervisor in a worker thread for task background jobs."""
 
     async def _runner() -> dict:
         if use_handoff:
             return await supervisor.collaborate_with_handoff(
                 state=initial_state,
+                inputs=inputs,
                 user_request=initial_state.get("raw_input"),
             )
-        return await supervisor.collaborate(state=initial_state)
+        return await supervisor.collaborate(state=initial_state, inputs=inputs)
 
     return asyncio.run(_runner())
 
@@ -345,12 +472,16 @@ def _build_state_template(report_mode: str) -> dict:
         "source_type": "arxiv",
         "report_mode": report_mode,
         "research_depth": "full",
+        "interaction_mode": "non_interactive",
         "paper_type": None,
+        "auto_fill": False,
         "brief": None,
         "search_plan": None,
         "search_plan_warnings": [],
         "rag_result": None,
         "paper_cards": [],
+        "compression_result": None,
+        "taxonomy": None,
         "review_feedback": None,
         "review_passed": None,
         "artifacts_created": [],
@@ -369,6 +500,8 @@ def _build_state_template(report_mode: str) -> dict:
         "draft_markdown": None,
         "full_markdown": None,
         "followup_hints": [],
+        "awaiting_followup": False,
+        "followup_resolution": None,
         "tokens_used": 0,
         "warnings": [],
         "errors": [],
@@ -391,14 +524,20 @@ async def _run_graph(task_id: str):
 
     try:
         # Create the output workspace directory
-        from src.agent.output_workspace import create_workspace
+        from src.agent.output_workspace import DEFAULT_WORKSPACE_USER, build_workspace_id, create_workspace
+
+        workspace_user = DEFAULT_WORKSPACE_USER or "user"
+        if not task.workspace_id:
+            task.workspace_id = build_workspace_id(workspace_user)
 
         create_workspace(task.task_id, {
             "workspace_id": task.workspace_id or "",
+            "workspace_opened_at": task.created_at,
+            "task_created_at": task.created_at,
             "source_type": task.source_type,
             "report_mode": task.report_mode,
             "input_value": task.input_value,
-        })
+        }, workspace_id=task.workspace_id, user_id=workspace_user)
 
         import functools
         from src.agent.checkpointing import build_graph_config
@@ -410,12 +549,15 @@ async def _run_graph(task_id: str):
             from src.research.agents.supervisor import get_supervisor
 
             supervisor = get_supervisor()
+            emitter = NodeEventEmitter()
+            emitter.events = task.node_events
             initial_state: dict = {
                 **_build_state_template(task.report_mode),
                 "task_id": task.task_id,
                 "workspace_id": task.workspace_id or "",
                 "source_type": "research",
                 "raw_input": task.input_value,
+                "auto_fill": getattr(task, "auto_fill", False),
             }
             configured_mode = getattr(supervisor.config, "supervisor_mode", SupervisorMode.GRAPH)
             task.supervisor_mode = configured_mode.value if hasattr(configured_mode, "value") else str(configured_mode)
@@ -429,12 +571,17 @@ async def _run_graph(task_id: str):
                     supervisor,
                     initial_state,
                     use_handoff=use_handoff,
+                    inputs={
+                        "_event_emitter": emitter,
+                        "task_id": task.task_id,
+                        "workspace_id": task.workspace_id or "",
+                    },
                 ),
             )
             supervisor_state = supervisor_result or {}
             trace = list(supervisor_state.get("collaboration_trace") or [])
             task.collaboration_trace = _json_safe(trace) or []
-            if trace:
+            if trace and not any(event.get("type") == "node_start" for event in task.node_events):
                 _append_supervisor_trace_events(task.node_events, trace)
             result = {
                 "final_report": supervisor_state.get("final_report"),
@@ -484,11 +631,15 @@ async def _run_graph(task_id: str):
         task.search_plan = _json_safe(state_result.get("search_plan"))
         task.rag_result = _json_safe(state_result.get("rag_result"))
         task.paper_cards = _json_safe(state_result.get("paper_cards")) or []
+        task.compression_result = _json_safe(state_result.get("compression_result"))
+        task.taxonomy = _json_safe(state_result.get("taxonomy"))
         task.draft_report = _json_safe(state_result.get("draft_report"))
         task.review_feedback = _json_safe(state_result.get("review_feedback"))
         task.review_passed = state_result.get("review_passed")
         task.artifacts_created = _json_safe(state_result.get("artifacts_created")) or []
         task.artifact_count = int(state_result.get("artifact_count") or 0)
+        task.awaiting_followup = bool(state_result.get("awaiting_followup", False))
+        task.followup_resolution = _json_safe(state_result.get("followup_resolution"))
 
         if source_type == "research":
             brief = task.brief
@@ -509,21 +660,79 @@ async def _run_graph(task_id: str):
                 task.report_context_snapshot = task.result_markdown
                 task.status = TaskStatus.COMPLETED
             elif brief:
+                # No markdown generated - likely due to retrieval failure
+                # Generate a helpful message report instead of JSON dump
                 import json as _json
 
-                result_payload = {
-                    "brief": brief,
-                    "search_plan": search_plan,
-                    "rag_result": task.rag_result,
-                    "review_feedback": task.review_feedback,
-                    "review_passed": task.review_passed,
-                }
-                task.result_markdown = _json.dumps(result_payload, ensure_ascii=False, indent=2)
-                task.report_context_snapshot = task.result_markdown
+                errors = state_result.get("errors", [])
+                rag_result = task.rag_result or {}
+
+                # Build a descriptive error/fallback report
+                topic = brief.get("topic", task.input_value or "Unknown topic")
+                sub_questions = brief.get("sub_questions", [])
+                total_papers = rag_result.get("total_papers", 0) if isinstance(rag_result, dict) else 0
+
+                error_report = f"""# Research Report: {topic}
+
+## Status
+
+**Status**: Partial completion - no papers retrieved
+
+## Research Brief
+
+**Topic**: {topic}
+
+**Sub-questions**:
+{chr(10).join(f"- {q}" for q in sub_questions) if sub_questions else "- (none specified)"}
+
+**Confidence**: {brief.get("confidence", "unknown")}
+
+## Issues
+
+"""
+                if errors:
+                    error_report += f"""### Errors Encountered
+
+{chr(10).join(f"- {e}" for e in errors if isinstance(e, str))}
+
+"""
+                if total_papers == 0:
+                    error_report += f"""### Retrieval Result
+
+No papers were retrieved for this topic. Possible reasons:
+- The search service may be unavailable
+- The topic may not have relevant papers indexed
+- Search queries may need refinement
+
+## Recommendations
+
+1. Verify that the search service (SearXNG) is running
+2. Try a more specific topic
+3. Check the RAG pipeline logs for details
+
+## Raw Data
+
+For debugging, the following data was collected:
+
+- **Brief**: Available in `brief.json`
+- **Search Plan**: {'Available' if search_plan else 'Not generated'}
+- **Papers Retrieved**: {total_papers}
+"""
+                else:
+                    error_report += f"""### Retrieval Result
+
+{total_papers} paper(s) were retrieved but could not be processed into a report.
+Please check the system logs for details.
+
+"""
+
+                task.result_markdown = error_report
+                task.draft_markdown = error_report
+                task.report_context_snapshot = error_report
+
                 if search_plan or brief.get("needs_followup"):
                     task.status = TaskStatus.COMPLETED
                 else:
-                    errors = result.get("errors", []) if result else []
                     task.error = "; ".join(errors) if errors else "SearchPlanAgent produced no plan"
                     task.status = TaskStatus.FAILED
             else:
@@ -557,6 +766,8 @@ async def _run_graph(task_id: str):
                     "search_plan": task.search_plan,
                     "rag_result": task.rag_result,
                     "paper_cards": task.paper_cards,
+                    "compression_result": task.compression_result,
+                    "taxonomy": task.taxonomy,
                     "draft_report": task.draft_report,
                     "review_feedback": task.review_feedback,
                     "review_passed": task.review_passed,
@@ -564,6 +775,8 @@ async def _run_graph(task_id: str):
                     "artifact_count": task.artifact_count,
                     "collaboration_trace": task.collaboration_trace,
                     "supervisor_mode": task.supervisor_mode,
+                    "awaiting_followup": task.awaiting_followup,
+                    "followup_resolution": task.followup_resolution,
                 },
             )
             if report_id:
@@ -571,7 +784,7 @@ async def _run_graph(task_id: str):
 
             # Write to output workspace
             from src.agent.output_workspace import write_report
-            write_report(task.task_id, task.result_markdown)
+            write_report(task.task_id, task.result_markdown, workspace_id=task.workspace_id)
 
     except Exception as e:
         task.error = str(e)

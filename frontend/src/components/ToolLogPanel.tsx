@@ -40,6 +40,18 @@ export function ToolLogPanel({ events }: Props) {
           {ev.type === 'status_change' && (
             <span className="text-[#a16207]">⚡ status → {ev.status}</span>
           )}
+          {ev.type === 'artifact_ready' && (
+            <span className="text-[#0f766e]">
+              ◇ artifact ready → {ev.artifact_name}
+              {ev.summary ? ` (${ev.summary})` : ''}
+            </span>
+          )}
+          {ev.type === 'report_snapshot' && (
+            <span className="text-[#7c2d12]">
+              ✎ live markdown → {ev.artifact_name}
+              {ev.is_final ? ' (final)' : ''}
+            </span>
+          )}
           {ev.type === 'done' && (
             <span
               className={
