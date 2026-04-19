@@ -88,14 +88,22 @@ def persist_artifacts_node(state: dict) -> dict:
     # ── 1. Review Feedback ──────────────────────────────────────────────
     review_feedback = state.get("review_feedback")
     if review_feedback is not None:
-        import json as _json
+        if hasattr(review_feedback, "model_dump"):
+            review_feedback_payload = review_feedback.model_dump(mode="json")
+        elif isinstance(review_feedback, dict):
+            review_feedback_payload = review_feedback
+        else:
+            review_feedback_payload = {}
+
+        summary = review_feedback_payload.get("summary")
+        review_id = review_feedback_payload.get("review_id", "")
         _save(
             artifact_type=ArtifactType.REVIEW_FEEDBACK,
             title=f"Review for task {task_id}",
             content_ref=None,
-            summary=review_feedback.summary,
+            summary=str(summary) if summary else None,
             tags=["review", "quality"],
-            metadata={"review_id": getattr(review_feedback, "review_id", "")},
+            metadata={"review_id": str(review_id) if review_id else ""},
         )
 
     # ── 2. RAG Result ────────────────────────────────────────────────

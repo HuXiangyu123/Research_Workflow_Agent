@@ -118,3 +118,70 @@ def test_resolve_preserves_sections_and_claims():
     resolved = result["resolved_report"]
     assert resolved.sections == draft.sections
     assert len(resolved.claims) == len(draft.claims)
+
+
+def test_resolve_preserves_existing_grounding_evidence():
+    draft = _make_draft(
+        citations=[
+            Citation(
+                label="[1]",
+                url="https://arxiv.org/abs/1706.03762",
+                reason="paper",
+                fetched_content="This citation already contains abstract evidence about the method and results.",
+            )
+        ]
+    )
+
+    with (
+        patch(
+            "src.graph.nodes.resolve_citations.check_url_reachable_sync",
+            return_value=True,
+        ),
+        patch(
+            "src.graph.nodes.resolve_citations._fetch_content_snippet",
+            return_value="remote html should not override existing evidence",
+        ) as fetch_mock,
+    ):
+        result = resolve_citations({"draft_report": draft})
+
+    resolved = result["resolved_report"]
+    assert resolved.citations[0].fetched_content.startswith("This citation already contains")
+    fetch_mock.assert_not_called()
+
+
+def test_resolve_extracts_arxiv_abstract_from_html():
+    draft = _make_draft(
+        citations=[
+            Citation(
+                label="[1]",
+                url="https://arxiv.org/abs/1706.03762",
+                reason="paper",
+            )
+        ]
+    )
+    arxiv_html = """
+    <!DOCTYPE html>
+    <html>
+      <body>
+        <blockquote class="abstract mathjax">
+          <span class="descriptor">Abstract:</span>
+          This paper studies a grounded retrieval pipeline and reports strong evidence on benchmark tasks.
+        </blockquote>
+      </body>
+    </html>
+    """
+
+    with (
+        patch(
+            "src.graph.nodes.resolve_citations.check_url_reachable_sync",
+            return_value=True,
+        ),
+        patch(
+            "src.graph.nodes.resolve_citations._fetch_content_snippet",
+            return_value=arxiv_html,
+        ),
+    ):
+        result = resolve_citations({"draft_report": draft})
+
+    resolved = result["resolved_report"]
+    assert "grounded retrieval pipeline" in resolved.citations[0].fetched_content

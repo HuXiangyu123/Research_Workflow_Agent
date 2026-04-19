@@ -1,31 +1,15 @@
 from __future__ import annotations
 
-import json
-import os
 import time
 from dataclasses import dataclass
 from typing import Any
 
 
-def _ensure_dir(path: str) -> None:
-    os.makedirs(path, exist_ok=True)
+_TRANSIENT_STORES: dict[str, dict[str, Any]] = {}
 
 
-def _read_json(path: str, default: Any) -> Any:
-    if not os.path.exists(path):
-        return default
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _write_json(path: str, obj: Any) -> None:
-    parent = os.path.dirname(path)
-    if parent:
-        _ensure_dir(parent)
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, path)
+def _store_for(path: str) -> dict[str, Any]:
+    return _TRANSIENT_STORES.setdefault(path, {"items": [], "messages": [], "summary": ""})
 
 
 def _looks_like_secret(text: str) -> bool:
@@ -42,7 +26,7 @@ class LongTermMemory:
     path: str
 
     def load(self) -> list[str]:
-        data = _read_json(self.path, default={"items": []})
+        data = _store_for(self.path)
         items = data.get("items", [])
         return [x for x in items if isinstance(x, str)]
 
@@ -50,22 +34,22 @@ class LongTermMemory:
         item = (item or "").strip()
         if not item or _looks_like_secret(item):
             return
-        data = _read_json(self.path, default={"items": []})
+        data = _store_for(self.path)
         items = data.get("items", [])
         if not isinstance(items, list):
             items = []
         if item not in items:
             items.append(item)
-        _write_json(self.path, {"items": items})
+        data["items"] = items
 
     def clear(self) -> None:
-        _write_json(self.path, {"items": []})
+        _store_for(self.path)["items"] = []
 
     def to_prompt(self, max_items: int = 20) -> str:
         items = self.load()[:max_items]
         if not items:
             return ""
-        lines = ["用户长期记忆（来自历史偏好与显式记录）："]
+        lines = ["用户运行期记忆（来自当前进程内偏好与显式记录）："]
         for it in items:
             lines.append(f"- {it}")
         return "\n".join(lines)
@@ -76,7 +60,11 @@ class ConversationStore:
     path: str
 
     def load(self) -> dict[str, Any]:
-        return _read_json(self.path, default={"messages": [], "summary": ""})
+        data = _store_for(self.path)
+        return {
+            "messages": list(data.get("messages", [])),
+            "summary": data.get("summary", ""),
+        }
 
     def append(self, role: str, content: str) -> None:
         role = (role or "").strip()
@@ -88,13 +76,10 @@ class ConversationStore:
         if not isinstance(messages, list):
             messages = []
         messages.append({"role": role, "content": content, "ts": int(time.time())})
-        data["messages"] = messages
-        _write_json(self.path, data)
+        _store_for(self.path)["messages"] = messages
 
     def set_summary(self, summary: str) -> None:
-        data = self.load()
-        data["summary"] = (summary or "").strip()
-        _write_json(self.path, data)
+        _store_for(self.path)["summary"] = (summary or "").strip()
 
     def get_summary(self) -> str:
         data = self.load()
@@ -126,4 +111,3 @@ class ConversationStore:
                 if isinstance(role, str) and isinstance(content, str):
                     lines.append(f"{role}: {content}")
         return "\n".join(lines)
-

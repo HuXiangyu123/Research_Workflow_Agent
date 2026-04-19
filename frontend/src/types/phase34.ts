@@ -185,13 +185,16 @@ export interface WorkspaceSummary {
 
 export type ExecutionMode = 'legacy' | 'hybrid' | 'v2';
 export type AgentMode = 'auto' | 'planner' | 'retriever' | 'analyst' | 'reviewer';
+export type SupervisorMode = 'graph' | 'llm_handoff';
 
 export interface Phase4Config {
   execution_mode: ExecutionMode;
   agent_mode: AgentMode;
+  supervisor_mode: SupervisorMode;
   enable_mcp: boolean;
   enable_skills: boolean;
   enable_replan: boolean;
+  auto_fill: boolean;
   node_backends: NodeBackendConfig;
 }
 

@@ -91,7 +91,7 @@ class RagEvalRunner:
             "smoke": "phase2_smoke.jsonl",
             "regression": "scifact_regression.jsonl",
             "scifact_regression": "scifact_regression.jsonl",
-            "full": "phase2_full.jsonl",
+            "full": "scifact_full.jsonl",
         }
         filename = preset_map.get(source, source)
         filepath = self._cases_dir / filename
@@ -221,6 +221,30 @@ class RagEvalRunner:
 
     # ── 内部方法 ──────────────────────────────────────────────────────────
 
+    def _auto_init_retrievers(self) -> None:
+        """Initialize corpus retrieval dependencies when the caller did not inject them."""
+        if self._retriever and self._deduper and self._reranker and self._chunk_retriever:
+            return
+
+        from src.corpus.search.deduper import PaperDeduper
+        from src.corpus.search.reranker import CrossEncoderReranker
+        from src.corpus.search.retrievers.chunk_retriever import ChunkRetriever
+        from src.corpus.store import CorpusRepository
+
+        repository = self._retriever or CorpusRepository()
+        connect = getattr(repository, "connect", None)
+        if callable(connect):
+            connect()
+
+        self._retriever = repository
+        self._deduper = self._deduper or PaperDeduper()
+        self._reranker = self._reranker or CrossEncoderReranker(model=None)
+        self._chunk_retriever = self._chunk_retriever or ChunkRetriever(
+            chunk_store=getattr(repository, "_chunk_store", None),
+            milvus_client=getattr(repository, "_vector_index", None),
+            embedding_model=getattr(repository, "_embedding_model", None),
+        )
+
     def _retrieve_papers(
         self,
         case: RagEvalCase,
@@ -342,16 +366,27 @@ class RagEvalRunner:
             for p in data.get("gold_papers", [])
         ]
 
-        gold_evidence = [
-            GoldEvidence(
-                paper_title=e.get("paper_title", ""),
-                expected_section=e.get("expected_section", ""),
-                text_hint=e.get("text_hint", ""),
-                sub_question_id=e.get("sub_question_id", ""),
-                expected_support_type=e.get("expected_support_type", ""),
+        paper_id_by_title = {
+            p.title: p.canonical_id or p.arxiv_id
+            for p in gold_papers
+            if p.title and (p.canonical_id or p.arxiv_id)
+        }
+
+        gold_evidence = []
+        for e in data.get("gold_evidence", []):
+            paper_title = e.get("paper_title", "")
+            text_hint = e.get("text_hint", "")
+            gold_evidence.append(
+                GoldEvidence(
+                    paper_id=e.get("paper_id") or paper_id_by_title.get(paper_title, ""),
+                    paper_title=paper_title,
+                    expected_section=e.get("expected_section", ""),
+                    text=e.get("text") or text_hint,
+                    text_hint=text_hint,
+                    sub_question_id=e.get("sub_question_id", ""),
+                    expected_support_type=e.get("expected_support_type", ""),
+                )
             )
-            for e in data.get("gold_evidence", [])
-        ]
 
         gold_claims = [
             GoldClaim(
@@ -375,3 +410,56 @@ class RagEvalRunner:
             source=data.get("source", "manual"),
             notes=data.get("notes", ""),
         )
+
+    def _project_grounding_citations(
+        self,
+        case: RagEvalCase,
+        predicted_papers: list,
+        predicted_chunks: list,
+    ) -> list[dict]:
+        """Project retrieved papers/chunks into citation records for grounding metrics."""
+        records: list[dict] = []
+        papers_by_id: dict[str, object] = {}
+        for paper in predicted_papers:
+            for key in (
+                getattr(paper, "canonical_id", ""),
+                getattr(paper, "primary_doc_id", ""),
+                getattr(paper, "doc_id", ""),
+            ):
+                if key:
+                    papers_by_id[key] = paper
+
+        for claim in case.gold_claims:
+            paper_id = claim.supported_by_paper
+            paper = papers_by_id.get(paper_id)
+            matching_chunks = [
+                chunk
+                for chunk in predicted_chunks
+                if (
+                    getattr(chunk, "paper_id", None) == paper_id
+                    or getattr(chunk, "canonical_id", None) == paper_id
+                )
+            ]
+            expected = (claim.supported_by_evidence_section or "").lower()
+            supported = False
+            for chunk in matching_chunks:
+                section = (getattr(chunk, "section", "") or "").lower()
+                support_type = (getattr(chunk, "support_type", "") or "").lower()
+                if expected and (expected in section or expected == support_type):
+                    supported = True
+                    break
+            if not expected and matching_chunks:
+                supported = True
+
+            refs = getattr(getattr(paper, "dedup_info", None), "source_refs", []) if paper else []
+            records.append(
+                {
+                    "claim_text": claim.claim_text,
+                    "paper_id": paper_id,
+                    "paper_title": getattr(paper, "title", "") if paper else "",
+                    "url": refs[0] if refs else "",
+                    "reachable": bool(paper),
+                    "support_status": "supported" if supported else "unsupported",
+                }
+            )
+        return records

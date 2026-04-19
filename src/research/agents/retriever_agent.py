@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import logging
+import time
 from typing import Any
 from typing import TypedDict
 
@@ -480,6 +481,123 @@ class RetrieverAgent:
 
         return enrich_search_results_with_arxiv(candidates)
 
+    def _recover_candidates_from_direct_sources(
+        self,
+        *,
+        brief: dict[str, Any],
+        search_plan: dict[str, Any],
+        raw_results: list[dict[str, Any]],
+        candidates: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Recover candidates with arXiv-direct / DeepXiv when TAG search is sparse.
+
+        The real supervisor path currently depends on SearXNG for TAG retrieval.
+        When that leg returns few or zero hits, reuse the broader retrieval
+        helpers from the graph search node so agent mode and node mode stay
+        aligned.
+        """
+        from src.research.graph.nodes.search import _time_filter_from_range
+        from src.tools.arxiv_api import (
+            DEFAULT_YEAR_FILTER,
+            enrich_search_results_with_arxiv,
+            search_arxiv_direct,
+        )
+        from src.tools.deepxiv_client import search_papers
+
+        total_hits = sum(len(result.get("hits", [])) for result in raw_results if isinstance(result, dict))
+        if len(candidates) >= 6 or (candidates and total_hits > 0):
+            return candidates, None
+
+        all_queries: list[tuple[str, str, int]] = []
+        seen_queries: set[str] = set()
+        for result in raw_results:
+            query = str(result.get("query") or "").strip()
+            meta = result.get("query_meta") if isinstance(result.get("query_meta"), dict) else {}
+            expected_hits = int(meta.get("expected_hits", 10) or 10)
+            intent = str(meta.get("intent", "exploration") or "exploration")
+            if not query or query in seen_queries:
+                continue
+            seen_queries.add(query)
+            all_queries.append((query, intent, expected_hits))
+
+        if not all_queries:
+            for item in self._queries_from_search_plan(search_plan):
+                query = str(item.get("query") or "").strip()
+                if not query or query in seen_queries:
+                    continue
+                seen_queries.add(query)
+                all_queries.append(
+                    (
+                        query,
+                        str(item.get("intent", "exploration") or "exploration"),
+                        int(item.get("expected_hits", 10) or 10),
+                    )
+                )
+
+        if not all_queries:
+            return candidates, None
+
+        effective_year_filter = _time_filter_from_range(
+            str(search_plan.get("time_range") or brief.get("time_range") or "")
+        ) or DEFAULT_YEAR_FILTER
+
+        recovery_queries = all_queries[:4]
+        direct_candidates: list[dict[str, Any]] = []
+        for idx, (query, _, _) in enumerate(recovery_queries):
+            direct_candidates.extend(
+                search_arxiv_direct(
+                    query,
+                    max_results=6,
+                    year_filter=effective_year_filter,
+                )
+            )
+            if idx < len(recovery_queries) - 1:
+                time.sleep(0.8)
+
+        deepxiv_candidates: list[dict[str, Any]] = []
+        deepxiv_date_from = (
+            f"{effective_year_filter}-01-01"
+            if str(effective_year_filter).isdigit()
+            else None
+        )
+        for query, _, _ in recovery_queries[:3]:
+            deepxiv_candidates.extend(
+                search_papers(
+                    query,
+                    size=6,
+                    date_from=deepxiv_date_from,
+                )
+            )
+
+        merged: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+
+        def _add_many(items: list[dict[str, Any]]) -> None:
+            for item in items:
+                arxiv_id = str(item.get("arxiv_id") or "").strip().lower()
+                url = str(item.get("url") or "").strip().lower()
+                title = str(item.get("title") or "").strip().lower()
+                key = arxiv_id or url or title
+                if not key or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                merged.append(item)
+
+        _add_many(direct_candidates)
+        _add_many(deepxiv_candidates)
+        _add_many(candidates)
+
+        if len(merged) <= len(candidates):
+            return candidates, None
+
+        recovered = enrich_search_results_with_arxiv(merged)
+        note = (
+            "TAG sparse-retrieval fallback added "
+            f"{len(recovered) - len(candidates)} candidate(s) via throttled arXiv direct / DeepXiv."
+        )
+        logger.info("[RetrieverAgent] %s", note)
+        return recovered, note
+
     # ── Helpers ─────────────────────────────────────────────────────────
 
     def _parse_json(self, text: str) -> dict | None:
@@ -588,6 +706,12 @@ class RetrieverAgent:
         )
 
         query = search_plan.get("plan_goal") or brief.get("research_topic") or brief.get("topic", "")
+        candidates, recovery_note = self._recover_candidates_from_direct_sources(
+            brief=brief,
+            search_plan=search_plan,
+            raw_results=raw_results,
+            candidates=candidates,
+        )
         candidates, rerank_log = _rerank_and_filter_candidates(
             candidates,
             brief=brief,
@@ -603,6 +727,12 @@ class RetrieverAgent:
                 }
             )
 
+        coverage_notes = [
+            f"TAG agent 执行 {len(raw_results)} 组检索，二次筛选后保留 {len(candidates)} 篇候选论文",
+        ]
+        if recovery_note:
+            coverage_notes.append(recovery_note)
+
         rag_result = RagResult(
             query=query,
             sub_questions=list(brief.get("sub_questions", [])) if isinstance(brief.get("sub_questions"), list) else [],
@@ -612,9 +742,7 @@ class RetrieverAgent:
             retrieval_trace=query_traces,
             dedup_log=[{"strategy": "url/title", "total": len(candidates), "unique": len(candidates)}],
             rerank_log=rerank_log,
-            coverage_notes=[
-                f"TAG agent 执行 {len(raw_results)} 组检索，二次筛选后保留 {len(candidates)} 篇候选论文",
-            ],
+            coverage_notes=coverage_notes,
             total_papers=len(candidates),
             total_chunks=0,
             retrieved_at="",

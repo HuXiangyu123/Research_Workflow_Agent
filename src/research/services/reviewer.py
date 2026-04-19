@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from src.models.review import (
@@ -95,11 +97,11 @@ class ReviewerService:
         revision_actions.extend(cards_actions)
 
         # ── 2. 覆盖性检查 ──────────────────────────────────────────────
-        coverage_issues, coverage_gaps, coverage_actions = self._check_coverage(
+        coverage_issues, coverage_gap_items, coverage_actions = self._check_coverage(
             rag_result, paper_cards, report_draft
         )
         issues.extend(coverage_issues)
-        coverage_gaps.extend(coverage_gaps)
+        coverage_gaps.extend(coverage_gap_items)
         revision_actions.extend(coverage_actions)
 
         # ── 2. Claim 支撑检查 ──────────────────────────────────────
@@ -117,7 +119,14 @@ class ReviewerService:
         issues.extend(citation_issues)
         revision_actions.extend(citation_actions)
 
-        # ── 4. 结构重复/一致性检查 ─────────────────────────────────
+        # ── 4. Citation breadth / concentration checks ──────────────────
+        citation_balance_issues, citation_balance_actions = self._check_citation_breadth_and_balance(
+            paper_cards, report_draft
+        )
+        issues.extend(citation_balance_issues)
+        revision_actions.extend(citation_balance_actions)
+
+        # ── 5. 结构重复/一致性检查 ─────────────────────────────────
         dup_issues, dup_actions = self._check_duplication_consistency(report_draft)
         issues.extend(dup_issues)
         revision_actions.extend(dup_actions)
@@ -297,6 +306,7 @@ class ReviewerService:
         if claims:
             unsupported_claim_ids: list[str] = []
             partial_claim_ids: list[str] = []
+            abstained_claim_ids: list[str] = []
 
             for claim in claims:
                 claim_id = str(_safe_get(claim, "id", "")) or "unknown_claim"
@@ -338,15 +348,27 @@ class ReviewerService:
                     unsupported_claim_ids.append(claim_id)
                 elif overall_status == "partial":
                     partial_claim_ids.append(claim_id)
+                elif overall_status == "abstained":
+                    abstained_claim_ids.append(claim_id)
 
             if unsupported_claim_ids:
+                total_claims = max(len(claims), 1)
+                unsupported_ratio = len(unsupported_claim_ids) / total_claims
+                severity = (
+                    ReviewSeverity.BLOCKER
+                    if unsupported_ratio >= 0.8
+                    else ReviewSeverity.ERROR
+                    if unsupported_ratio >= 0.5
+                    else ReviewSeverity.WARNING
+                )
                 issues.append(
                     ReviewIssue(
-                        severity=ReviewSeverity.WARNING,
+                        severity=severity,
                         category=ReviewCategory.UNSUPPORTED_CLAIM,
                         target="claims",
                         summary=(
-                            f"{len(unsupported_claim_ids)}/{len(claims)} claims are currently ungrounded"
+                            f"{len(unsupported_claim_ids)}/{len(claims)} claims are currently ungrounded "
+                            f"({unsupported_ratio:.0%} of the claim set)"
                         ),
                         evidence_refs=unsupported_claim_ids[:5],
                     )
@@ -361,15 +383,48 @@ class ReviewerService:
                 )
 
             if partial_claim_ids:
+                partial_ratio = len(partial_claim_ids) / max(len(claims), 1)
                 issues.append(
                     ReviewIssue(
-                        severity=ReviewSeverity.INFO,
+                        severity=(
+                            ReviewSeverity.ERROR
+                            if partial_ratio >= 0.5
+                            else ReviewSeverity.WARNING
+                            if partial_ratio >= 0.25
+                            else ReviewSeverity.INFO
+                        ),
                         category=ReviewCategory.UNSUPPORTED_CLAIM,
                         target="claims",
                         summary=(
                             f"{len(partial_claim_ids)}/{len(claims)} claims are only partially supported"
                         ),
                         evidence_refs=partial_claim_ids[:5],
+                    )
+                )
+                if partial_ratio >= 0.25:
+                    actions.append(
+                        RevisionAction(
+                            action_type=RevisionActionType.REVISE_DRAFT,
+                            target="claims",
+                            reason=(
+                                "Too many draft claims are only partially supported and should be rewritten "
+                                "or narrowed to grounded evidence."
+                            ),
+                            priority=2,
+                        )
+                    )
+
+            if abstained_claim_ids:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.WARNING,
+                        category=ReviewCategory.UNSUPPORTED_CLAIM,
+                        target="claims",
+                        summary=(
+                            f"{len(abstained_claim_ids)}/{len(claims)} claims could not be verified because "
+                            "usable citation evidence was missing"
+                        ),
+                        evidence_refs=abstained_claim_ids[:5],
                     )
                 )
 
@@ -459,6 +514,116 @@ class ReviewerService:
                 summary="No RAG result — citation reachability cannot be checked",
             )
             issues.append(issue)
+
+        return issues, actions
+
+    def _check_citation_breadth_and_balance(
+        self,
+        paper_cards: list | None,
+        report_draft: Any | None,
+    ) -> tuple[list[ReviewIssue], list[RevisionAction]]:
+        """Check whether the draft cites a broad enough source base.
+
+        Multi-paper survey drafts should not repeatedly recycle a tiny citation
+        pool. This gate looks at both the citation list and inline citation
+        mentions inside rendered section text.
+        """
+        issues: list[ReviewIssue] = []
+        actions: list[RevisionAction] = []
+
+        citations = _report_citations(report_draft)
+        claims = _report_claims(report_draft)
+        paper_count = len(paper_cards or [])
+        citation_count = len(citations)
+        if not citations or paper_count < 5:
+            return issues, actions
+
+        coverage_ratio = citation_count / max(paper_count, 1)
+        if coverage_ratio < 0.7:
+            severity = ReviewSeverity.ERROR
+        elif coverage_ratio < 0.85:
+            severity = ReviewSeverity.WARNING
+        else:
+            severity = None
+
+        if severity is not None:
+            issues.append(
+                ReviewIssue(
+                    severity=severity,
+                    category=ReviewCategory.COVERAGE_GAP,
+                    target="citations",
+                    summary=(
+                        f"Only {citation_count}/{paper_count} retrieved papers were cited in the draft "
+                        f"({coverage_ratio:.0%} citation coverage)"
+                    ),
+                    evidence_refs=[
+                        str(_safe_get(cit, "label", ""))
+                        for cit in citations[:5]
+                        if _safe_get(cit, "label", "")
+                    ],
+                )
+            )
+            actions.append(
+                RevisionAction(
+                    action_type=RevisionActionType.RESEARCH_MORE,
+                    target="citations",
+                    reason="Broaden the evidence base so the final survey cites a larger share of the retrieved papers.",
+                    priority=1 if severity == ReviewSeverity.ERROR else 2,
+                )
+            )
+
+        sections = _safe_get(report_draft, "sections", {}) or {}
+        section_text = "\n".join(
+            str(content)
+            for content in sections.values()
+            if isinstance(content, str)
+        )
+        inline_mentions: Counter[str] = Counter()
+        for cit in citations:
+            label = str(_safe_get(cit, "label", "") or "").strip()
+            if not label:
+                continue
+            inline_mentions[label] = len(re.findall(re.escape(label), section_text))
+
+        mention_counts = inline_mentions
+        if not any(mention_counts.values()) and claims:
+            mention_counts = Counter(
+                str(label)
+                for claim in claims
+                for label in _list_like(_safe_get(claim, "citation_labels", []))
+                if label
+            )
+
+        total_mentions = sum(mention_counts.values())
+        cited_label_count = sum(1 for count in mention_counts.values() if count > 0)
+        average_reuse = total_mentions / cited_label_count if cited_label_count else 0.0
+
+        if (
+            cited_label_count > 0
+            and total_mentions >= 20
+            and cited_label_count <= 5
+            and average_reuse >= 6.0
+        ):
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.ERROR,
+                    category=ReviewCategory.DUPLICATION,
+                    target="citations",
+                    summary=(
+                        f"The draft reuses only {cited_label_count} unique citations across {total_mentions} inline mentions "
+                        f"(avg {average_reuse:.1f} mentions/source), indicating a narrow evidence base"
+                    ),
+                    evidence_refs=[label for label, count in mention_counts.most_common(5) if count > 0],
+                )
+            )
+            actions.append(
+                RevisionAction(
+                    action_type=RevisionActionType.REVISE_DRAFT,
+                    target="citations",
+                    reason="Redistribute claims across a broader citation pool instead of repeatedly citing the same few papers.",
+                    priority=1,
+                )
+            )
 
         return issues, actions
 

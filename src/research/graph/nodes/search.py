@@ -21,6 +21,19 @@ from src.tasking.trace_wrapper import get_trace_store, trace_node
 
 logger = logging.getLogger(__name__)
 
+STRICT_CORE_GROUPS = {"agent", "medical", "multimodal_or_imaging", "diagnosis_or_triage"}
+STRICT_CORE_FATAL_PENALTIES = {
+    "outside_requested_time_range",
+    "governance_without_clinical_scope",
+    "off_topic_core_intent",
+    "component_method_without_agent_scope",
+    "component_or_overview_without_agentic_scope",
+    "overview_paper_without_agentic_scope",
+    "missing_agent_for_strict_scope",
+    "missing_diagnosis_or_triage_for_strict_scope",
+    "missing_agentic_workflow_signal",
+}
+
 
 def _run_searxng_queries(
     all_queries: list[tuple[str, str, int]],
@@ -705,9 +718,9 @@ def _rerank_and_filter_candidates(
         _year_in_range(_candidate_year(cand), year_bounds)
         for cand in rescored
     )
-    min_keep = min(len(rescored), 4 if strict_core else 12)
-    hard_floor = min(len(rescored), 3 if strict_core else 3)
-    threshold = 1.6 if strict_core else 1.2 if active_groups else 0.0
+    min_keep = min(len(rescored), 3 if strict_core else 12)
+    hard_floor = min(len(rescored), 2 if strict_core else 3)
+    threshold = 2.2 if strict_core else 1.2 if active_groups else 0.0
 
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
@@ -731,7 +744,9 @@ def _rerank_and_filter_candidates(
             dropped.append(cand)
         elif strict_core and "component_or_overview_without_agentic_scope" in penalties and kept:
             dropped.append(cand)
-        elif strict_core and "missing_agentic_workflow_signal" in penalties and len(kept) >= hard_floor:
+        elif strict_core and "missing_agentic_workflow_signal" in penalties and kept:
+            dropped.append(cand)
+        elif strict_core and "missing_agent_for_strict_scope" in penalties and kept:
             dropped.append(cand)
         elif not in_year_range and cand_year is not None and len(kept) >= hard_floor:
             dropped.append(cand)
@@ -757,6 +772,10 @@ def _rerank_and_filter_candidates(
                         "outside_requested_time_range",
                         "off_topic_core_intent",
                         "governance_without_clinical_scope",
+                        "missing_agentic_workflow_signal",
+                        "component_method_without_agent_scope",
+                        "component_or_overview_without_agentic_scope",
+                        "overview_paper_without_agentic_scope",
                     }
                 )
             ]
@@ -772,6 +791,9 @@ def _rerank_and_filter_candidates(
             if str(cand.get("title") or "") not in selected_titles
         ]
 
+    strict_core_kept = sum(1 for cand in kept if _is_strict_core_candidate(cand))
+    adjacent_support_kept = max(0, len(kept) - strict_core_kept)
+
     rerank_log.append(
         {
             "strategy": "domain_aware_anchor_rerank",
@@ -779,6 +801,8 @@ def _rerank_and_filter_candidates(
             "strict_core": strict_core,
             "kept": len(kept),
             "dropped": len(dropped),
+            "strict_core_kept": strict_core_kept,
+            "adjacent_support_kept": adjacent_support_kept,
             "threshold": threshold,
             "year_bounds": year_bounds,
         }
@@ -812,96 +836,142 @@ def _supplement_strict_core_survey_candidates(
     *,
     rescored: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Recover adjacent but still useful survey citations under strict scope.
+    """Recover a small amount of adjacent support without letting it dominate.
 
-    Strict-core ranking should block obviously off-topic papers, but a survey
-    still needs a broader evidence base than only the top few fully agentic
-    systems. This pass re-adds in-range adjacent clinical/imaging papers when
-    they remain clearly relevant and are not flagged as severe scope violations.
+    Under strict-core topics, the candidate pool should stay majority-core.
+    Adjacent clinical support papers are allowed only in small quotas, mainly
+    for benchmarks or report-generation context, and only after more obviously
+    off-scope/component papers have already been filtered out.
     """
-    supplement_target = min(len(rescored), 10)
-    if len(kept) >= supplement_target:
-        return kept, dropped
+    strict_core_selected: list[dict[str, Any]] = []
+    strict_core_titles: set[str] = set()
+    for cand in rescored:
+        if _is_strict_core_candidate(cand):
+            title = str(cand.get("title") or "")
+            if title and title not in strict_core_titles:
+                strict_core_selected.append(cand)
+                strict_core_titles.add(title)
 
-    severe_penalties = {
-        "outside_requested_time_range",
-        "governance_without_clinical_scope",
-        "off_topic_core_intent",
-        "component_method_without_agent_scope",
-    }
-    core_groups = {"agent", "medical", "multimodal_or_imaging", "diagnosis_or_triage"}
+    strict_core_count = len(strict_core_selected)
+    if strict_core_count == 0:
+        adjacent_quota = 2
+    elif strict_core_count == 1:
+        adjacent_quota = 1
+    elif strict_core_count <= 3:
+        adjacent_quota = 2
+    else:
+        adjacent_quota = 3
 
-    kept_titles = {str(item.get("title") or "") for item in kept}
-    supplemented: list[dict[str, Any]] = []
-    remaining_dropped: list[dict[str, Any]] = []
-    component_quota = 0
-    for cand in dropped:
+    selected = list(strict_core_selected[:8])
+    selected_titles = {str(item.get("title") or "") for item in selected}
+
+    for cand in rescored:
         title = str(cand.get("title") or "")
-        matched = set(cand.get("relevance_diagnostics", {}).get("matched_groups", []))
-        penalties = set(cand.get("relevance_diagnostics", {}).get("penalties", []))
-        score = float(cand.get("combined_score") or 0.0)
-        title_lower = title.lower()
+        if not title or title in selected_titles:
+            continue
+        if len(selected) - min(len(selected), strict_core_count) >= adjacent_quota:
+            break
+        if _is_strict_core_adjacent_support_candidate(cand, strict_core_count=strict_core_count):
+            selected.append(cand)
+            selected_titles.add(title)
 
-        contextual_overview = (
-            any(_token_occurs(title_lower, token) for token in ("survey", "review", "introduction", "tutorial"))
-            and len(matched.intersection(core_groups)) >= 3
-            and score >= 1.2
-            and not penalties.intersection(severe_penalties)
-        )
-        adjacent_clinical_support = (
-            "medical" in matched
-            and ("agent" in matched or "diagnosis_or_triage" in matched)
-            and score >= 0.4
-            and not penalties.intersection(severe_penalties)
-            and "component_or_overview_without_agentic_scope" not in penalties
-            and "overview_paper_without_agentic_scope" not in penalties
-        )
-        triage_benchmark_support = (
-            "medical" in matched
-            and "diagnosis_or_triage" in matched
-            and any(_token_occurs(title_lower, token) for token in ("benchmark", "assistant", "workflow", "triage"))
-            and score >= -0.4
-            and not penalties.intersection(severe_penalties - {"off_topic_core_intent"})
-            and "component_or_overview_without_agentic_scope" not in penalties
-        )
-        component_context = (
-            component_quota < 2
-            and {"medical", "multimodal_or_imaging", "diagnosis_or_triage"}.issubset(matched)
-            and score >= -0.5
-            and not penalties.intersection(severe_penalties)
-            and not any(
-                _token_occurs(title_lower, token)
-                for token in ("segmentation", "registration", "clustering", "annotation")
+    if not selected:
+        fallback_pool = [
+            cand
+            for cand in rescored
+            if not set(cand.get("relevance_diagnostics", {}).get("penalties", [])).intersection(
+                {
+                    "outside_requested_time_range",
+                    "governance_without_clinical_scope",
+                    "off_topic_core_intent",
+                    "component_method_without_agent_scope",
+                    "component_or_overview_without_agentic_scope",
+                    "overview_paper_without_agentic_scope",
+                }
             )
+        ]
+        for cand in (fallback_pool or kept):
+            title = str(cand.get("title") or "")
+            if title and title not in selected_titles:
+                selected.append(cand)
+                selected_titles.add(title)
+            if len(selected) >= 2:
+                break
+
+    remaining_dropped = [
+        cand
+        for cand in rescored
+        if str(cand.get("title") or "") not in selected_titles
+    ]
+    return selected, remaining_dropped
+
+
+def _strict_core_match_count(candidate: dict[str, Any]) -> int:
+    matched = set(candidate.get("relevance_diagnostics", {}).get("matched_groups", []))
+    return len(matched.intersection(STRICT_CORE_GROUPS))
+
+
+def _is_strict_core_candidate(candidate: dict[str, Any]) -> bool:
+    matched = set(candidate.get("relevance_diagnostics", {}).get("matched_groups", []))
+    penalties = set(candidate.get("relevance_diagnostics", {}).get("penalties", []))
+    return STRICT_CORE_GROUPS.issubset(matched) and not penalties.intersection(STRICT_CORE_FATAL_PENALTIES)
+
+
+def _is_strict_core_adjacent_support_candidate(
+    candidate: dict[str, Any],
+    *,
+    strict_core_count: int,
+) -> bool:
+    matched = set(candidate.get("relevance_diagnostics", {}).get("matched_groups", []))
+    penalties = set(candidate.get("relevance_diagnostics", {}).get("penalties", []))
+    if penalties.intersection(
+        {
+            "outside_requested_time_range",
+            "governance_without_clinical_scope",
+            "off_topic_core_intent",
+            "component_method_without_agent_scope",
+            "component_or_overview_without_agentic_scope",
+            "overview_paper_without_agentic_scope",
+            "missing_agentic_workflow_signal",
+        }
+    ):
+        return False
+
+    title = str(candidate.get("title") or "").lower()
+    abstract = str(candidate.get("abstract") or candidate.get("content") or "").lower()
+    score = float(candidate.get("combined_score") or 0.0)
+    if score < 2.0:
+        return False
+
+    support_tokens = (
+        "benchmark",
+        "triage",
+        "report generation",
+        "report composition",
+        "question answering",
+        "retrieval",
+        "workflow",
+        "assistant",
+        "decision support",
+    )
+    has_support_signal = any(
+        _token_occurs(title, token) or _token_occurs(abstract, token)
+        for token in support_tokens
+    )
+    match_count = _strict_core_match_count(candidate)
+    if match_count < 3 and not (
+        {"medical", "multimodal_or_imaging"}.issubset(matched)
+        and has_support_signal
+    ):
+        return False
+
+    if "missing_agent_for_strict_scope" in penalties:
+        return strict_core_count >= 1 and (
+            (has_support_signal and score >= 2.2)
+            or (match_count >= 3 and score >= 2.6)
         )
 
-        should_recover = (
-            title not in kept_titles
-            and len(matched.intersection(core_groups)) >= 3
-            and score >= 1.4
-            and not penalties.intersection(severe_penalties)
-            and "component_or_overview_without_agentic_scope" not in penalties
-            and "overview_paper_without_agentic_scope" not in penalties
-        )
-        if (
-            title not in kept_titles
-            and (
-                should_recover
-                or contextual_overview
-                or adjacent_clinical_support
-                or triage_benchmark_support
-                or component_context
-            )
-            and len(kept) + len(supplemented) < supplement_target
-        ):
-            supplemented.append(cand)
-            kept_titles.add(title)
-            if component_context:
-                component_quota += 1
-        else:
-            remaining_dropped.append(cand)
-
-    return kept + supplemented, remaining_dropped
+    return has_support_signal or "diagnosis_or_triage" in matched
 
 
 def _extract_anchor_groups(brief: dict[str, Any], search_plan: dict[str, Any]) -> dict[str, Any]:
@@ -957,7 +1027,7 @@ def _extract_anchor_groups(brief: dict[str, Any], search_plan: dict[str, Any]) -
             "临床",
         )
 
-    if any(token in topic for token in ("image", "vision", "multimodal", "影像", "多模态", "radiology")):
+    if any(token in topic for token in ("image", "imaging", "vision", "multimodal", "影像", "多模态", "radiology")):
         groups["multimodal_or_imaging"] = (
             "image",
             "imaging",
@@ -993,6 +1063,9 @@ def _extract_anchor_groups(brief: dict[str, Any], search_plan: dict[str, Any]) -
             "triage",
             "clinical decision",
             "report generation",
+            "report composition",
+            "reporting",
+            "question answering",
             "decision support",
             "诊断",
             "分诊",
@@ -1090,6 +1163,9 @@ def _score_candidate_relevance(
         ("privacy", "governance_without_clinical_scope"),
         ("security", "governance_without_clinical_scope"),
         ("governance", "governance_without_clinical_scope"),
+        ("e-commerce", "off_topic_core_intent"),
+        ("adobe", "off_topic_core_intent"),
+        ("auction", "off_topic_core_intent"),
     )
     for token, label in off_topic_markers:
         if _token_occurs(text, token) and (not matched_groups or strict_core):
@@ -1101,7 +1177,10 @@ def _score_candidate_relevance(
             score -= 1.8
             penalties.append("component_method_without_agent_scope")
 
-    if strict_core and any(_token_occurs(title_lower, token) for token in ("survey", "introduction")) and not agentic_signal:
+    if strict_core and any(
+        _token_occurs(title_lower, token)
+        for token in ("survey", "review", "tutorial", "introduction", "overview", "modality", "modalities")
+    ) and "agent" not in matched_groups:
         score -= 1.0
         penalties.append("overview_paper_without_agentic_scope")
 
@@ -1121,10 +1200,14 @@ def _has_agentic_workflow_signal(text: str) -> bool:
         "retrieval",
         "rag",
         "workflow",
+        "orchestration",
+        "planner",
+        "coordinator",
         "benchmark",
         "tool",
         "llm-assisted",
         "report generation",
+        "report composition",
         "decision support",
     )
     return any(_token_occurs(text, token) for token in markers)

@@ -62,3 +62,45 @@ def test_review_node_returns_grounding_outputs():
     assert result["final_report"].report_confidence == "high"
     assert result["draft_markdown"] == "# grounded"
     assert result["warnings"] == ["citation warning"]
+
+
+def test_review_node_runs_claim_verification_on_verified_report():
+    draft = _make_draft()
+    feedback = ReviewFeedback(task_id="t1", workspace_id="ws1", passed=True, summary="ok")
+    captured: dict[str, object] = {}
+
+    def _capture_skill(*, workspace_id, task_id, draft_report):
+        captured["workspace_id"] = workspace_id
+        captured["task_id"] = task_id
+        captured["draft_report"] = draft_report
+        return ({"grounding_stats": {"supported_ratio": 1.0}}, [])
+
+    with (
+        patch(
+            "src.research.graph.nodes.review.ground_draft_report",
+            return_value={
+                "verified_report": {"claims": [{"id": "c1", "overall_status": "grounded"}], "citations": [], "sections": {"introduction": "ok"}},
+                "final_report": {"claims": [{"id": "c1", "overall_status": "partial"}], "citations": [], "sections": {"introduction": "ok"}},
+            },
+        ),
+        patch(
+            "src.research.graph.nodes.review._run_reviewer_sync",
+            return_value=feedback,
+        ),
+        patch(
+            "src.research.graph.nodes.review._run_claim_verification_skill",
+            side_effect=_capture_skill,
+        ),
+    ):
+        review_node(
+            {
+                "task_id": "t1",
+                "workspace_id": "ws1",
+                "draft_report": draft,
+                "paper_cards": [],
+            }
+        )
+
+    assert captured["workspace_id"] == "ws1"
+    assert captured["task_id"] == "t1"
+    assert captured["draft_report"]["claims"][0]["overall_status"] == "grounded"

@@ -121,8 +121,12 @@ def run_repl() -> None:
             chat_history_messages.append(AIMessage(content=response_text))
             
             # 5. Handle Report Saving (only if it looks like a report)
-            # Simple heuristic: if it has "# 标题" or "## 核心贡献"
-            is_report = "# " in response_text and "## " in response_text and "引用" in response_text
+            # Simple heuristic: markdown title + section headings + a references appendix.
+            is_report = (
+                "# " in response_text
+                and "## " in response_text
+                and ("## References" in response_text or "## 引用" in response_text)
+            )
             
             if is_report:
                  # 保存到文件

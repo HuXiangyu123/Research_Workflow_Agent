@@ -14,7 +14,7 @@
 - **暂不修复** — 迁移到官方 langgraph-supervisor 需要较大重构，当前 legacy/supervisor 架构仍可用
 
 ### Issue 2: `docs/issue/2026-04-16-langgraph-agent-workflow-audit.md`
-- 状态: ✅ 已修复
+- 状态: ✅ 已修复（彻底）
 - 优先级: P0
 - 修复内容:
   - 删除了 `HandoffSupervisorState` + 所有 handoff 相关代码
@@ -22,11 +22,19 @@
   - 删除了 `_summarize_handoff_trace`、`_result_payload`、`_build_default_handoff_model`、`_build_handoff_user_message`、`_format_handoff_agent_message`、`_select_handoff_nodes` 等未用方法
   - 删除了 `SupervisorGraphState.payload` 字段
   - 删除了未用的 imports (json, Sequence, Annotated, AnyMessage, HumanMessage, add_messages)
+  - ✅ 删除了 `LEGACY_NODE_ALIASES`（补充修复，之前遗漏的冗余代码）
 
 ### Issue 3: `docs/issue/2026-04-16-report-output-workspace-persistence-issue.md`
-- 状态: 暂不修复
+- 状态: ✅ 已修复
 - 优先级: P1
-- 核心: 报告产物缺少 `output/<task_id>/` 文件化工作区
+- 修复内容:
+  - 新建 `src/agent/output_workspace.py` 管理 task 工作区
+  - `create_workspace()` 创建 `output/<task_id>/metadata.json`
+  - 节点输出自动写入 workspace：`brief.json`、`search_plan.json`、`rag_result.json`、`paper_cards.json`、`draft.md`、`review_feedback.json`
+  - `_run_graph()` 在任务开始时创建 workspace，完成时写入 `report.md`
+  - `append_revision()` 在 review 失败时将当前 draft 保存为 `revisions/001_after_review.md`
+  - `SupervisorGraph` 的 `_make_collaboration_node` 集成 `_sync_node_to_workspace()` 同步节点输出
+  - `output/` 已在 `.gitignore` 中
 
 ### Issue 4: `docs/issue/2026-04-14-report-generation-quality-issues.md`
 - 状态: ✅ 已修复
@@ -68,7 +76,7 @@
 
 - [ ] Issue 1: langgraph-compliance-audit (P0) — 暂不修复（需要较大重构）
 - [x] Issue 2: langgraph-agent-workflow-audit (P0) — ✅ 已修复
-- [ ] Issue 3: report-output-workspace-persistence (P1) — 暂不修复
+- [x] Issue 3: report-output-workspace-persistence (P1) — ✅ 已修复
 - [x] Issue 4: report-generation-quality (P0) — ✅ 已修复
 - [x] Issue 5: agent-architecture (已修复)
 - [x] Issue 6: frontend-workflow (P1) — ✅ 已修复
@@ -101,8 +109,39 @@ python eval/runner.py --mode paper_read --cases eval/cases.jsonl --layer 1
 # 端到端测试 - research 模式
 python eval/runner.py --mode research --research-topic "AI Agent 在 Coding Agent 领域目前的发展" --layer 1
 
+# 完整测试（paper_read + research，两个 task_id 完整流程）
+python eval/runner.py --mode full --layer 1 --report
+
 # 前端编译检查
 cd frontend && npx tsc --noEmit
+```
+
+### 完整测试模式说明
+
+`--mode full` 会执行：
+1. **Paper Read 模式**：测试 3 个 arxiv 论文任务，每个产生独立的 `output/<task_id>/report.md`
+2. **Research 模式**：测试 1 个 research 主题任务，产生 `output/<task_id>/report.md`
+
+报告文件自动写入 `output/<task_id>/report.md`，通过 `src/agent/output_workspace.py` 管理。
+
+### 输出示例
+
+```
+FULL TEST: Running both paper_read and research modes
+
+### Paper Read Mode ###
+Running case: arxiv-01
+  [abc123def...] . PASS (45.2s, 15230 chars)
+...
+
+### Research Mode ###
+Running case: research-01
+  [xyz789...] ....... PASS (180.5s, 45678 chars)
+
+============================================================
+Results: 4/4 passed, 0 errors
+Reports saved to: output/<task_id>/report.md
+JSON log: eval/runs/run-20260416-143052.json
 ```
 
 ---

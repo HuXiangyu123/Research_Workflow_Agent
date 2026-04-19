@@ -1,0 +1,511 @@
+{
+  "summary": {
+    "total": 21,
+    "passed": 0,
+    "failed": 10,
+    "errors": 11
+  },
+  "results": [
+    {
+      "id": "arxiv-01",
+      "type": "arxiv",
+      "mode": "research",
+      "task_id": "e9327f87-f2ae-4c74-a6d4-7a27a56dbd5b",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "Transformer": true,
+              "attention": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 22.15,
+      "report_length": 1425
+    },
+    {
+      "id": "arxiv-02",
+      "type": "arxiv",
+      "mode": "research",
+      "task_id": "2807cf66-4576-402f-b91a-38d1d5645213",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "BERT": true,
+              "pre-training": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 28.22,
+      "report_length": 1857
+    },
+    {
+      "id": "arxiv-03",
+      "type": "arxiv",
+      "mode": "research",
+      "task_id": "849c201c-165e-4019-9b76-8502a7c29832",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "GPT-3": false,
+              "language model": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 26.45,
+      "report_length": 1576
+    },
+    {
+      "id": "arxiv-04",
+      "type": "arxiv",
+      "mode": "research",
+      "task_id": "1d6bbd01-8ca2-4daa-ba8b-3d555396fece",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "ViT": false,
+              "vision": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 22.61,
+      "report_length": 1637
+    },
+    {
+      "id": "arxiv-05",
+      "type": "arxiv",
+      "mode": "research",
+      "task_id": "98fe5d31-838c-4981-aa16-3150e1bd2def",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "GPT-4": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 18.95,
+      "report_length": 1470
+    },
+    {
+      "id": "arxiv-06",
+      "type": "arxiv",
+      "mode": "research",
+      "task_id": "d3a96e57-e41e-41c4-af5d-cbb5df9515f1",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "LoRA": false,
+              "adaptation": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 25.44,
+      "report_length": 1414
+    },
+    {
+      "id": "arxiv-07",
+      "type": "arxiv",
+      "mode": "research",
+      "error": "Task failed: SearchPlanAgent produced no plan",
+      "duration": 242.55
+    },
+    {
+      "id": "arxiv-08",
+      "type": "arxiv",
+      "mode": "research",
+      "task_id": "bc9fbb3f-5f3b-42f3-8272-9e3d7a95eaf8",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "残差": false,
+              "residual": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 19.54,
+      "report_length": 1237
+    },
+    {
+      "id": "pdf-01",
+      "type": "pdf",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.04
+    },
+    {
+      "id": "pdf-02",
+      "type": "pdf",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.03
+    },
+    {
+      "id": "pdf-03",
+      "type": "pdf",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.03
+    },
+    {
+      "id": "pdf-04",
+      "type": "pdf",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.03
+    },
+    {
+      "id": "seq-01",
+      "type": "sequential",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.03
+    },
+    {
+      "id": "seq-02",
+      "type": "sequential",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.02
+    },
+    {
+      "id": "seq-03",
+      "type": "sequential",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.03
+    },
+    {
+      "id": "gold-01",
+      "type": "gold",
+      "mode": "research",
+      "task_id": "354d534d-311e-4fe3-a42f-5f0cba9caf1b",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 19.81,
+      "report_length": 1233
+    },
+    {
+      "id": "gold-02",
+      "type": "gold",
+      "mode": "research",
+      "error": "Task failed: SearchPlanAgent produced no plan",
+      "duration": 514.28
+    },
+    {
+      "id": "gold-03",
+      "type": "gold",
+      "mode": "research",
+      "task_id": "d390b180-03c4-4b72-92da-ed918dc82606",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Results",
+              "Introduction",
+              "Methods",
+              "Discussion",
+              "Abstract"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 22.78,
+      "report_length": 1536
+    },
+    {
+      "id": "boundary-01",
+      "type": "boundary",
+      "mode": "research",
+      "task_id": "2eb6dd2b-cee1-46ee-b828-68310b8bcc5e",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "error_handled": {
+            "pass": false,
+            "indicators_found": []
+          }
+        }
+      },
+      "duration": 22.27,
+      "report_length": 1108
+    },
+    {
+      "id": "boundary-02",
+      "type": "boundary",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.03
+    },
+    {
+      "id": "research-01",
+      "type": "research",
+      "mode": "research",
+      "error": "unsupported operand type(s) for -: 'list' and 'set'",
+      "duration": 26.96
+    }
+  ],
+  "config": {
+    "mode": "research",
+    "use_api": false,
+    "layer": 1,
+    "cases_path": "eval/cases.jsonl",
+    "research_topic": null
+  },
+  "timestamp": "2026-04-16T03:45:15.912851"
+}

@@ -1,0 +1,19 @@
+{
+  "verified_claims": [
+    {
+      "claim_id": "c1",
+      "status": "grounded",
+      "reason": "Existing grounding evidence supports the claim.",
+      "cited_labels": ["[1]", "[2]"]
+    }
+  ],
+  "grounding_stats": {
+    "total": 1,
+    "grounded": 1,
+    "partial": 0,
+    "ungrounded": 0,
+    "abstained": 0,
+    "grounded_ratio": 1.0,
+    "supported_ratio": 1.0
+  }
+}

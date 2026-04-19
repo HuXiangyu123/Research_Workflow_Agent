@@ -20,9 +20,9 @@ def build_react_agent(llm: Runnable) -> Runnable:
 
 def stream_literature_report(agent: Runnable, arxiv_url_or_id: str) -> Iterable[dict[str, Any]]:
     prompt = (
-        "请根据以下 arXiv 链接或 arXiv ID 生成文献报告：\n"
+        "Generate an evidence-grounded literature report for the following arXiv URL or arXiv ID:\n"
         f"{arxiv_url_or_id}\n\n"
-        "要求：先获取论文元信息，然后检索相关开源资料与相关工作，最后输出结构化报告与引用列表。"
+        "First gather paper metadata, then retrieve relevant open resources and related work, and finally output a structured English report with references."
     )
     inputs = {
         "messages": [

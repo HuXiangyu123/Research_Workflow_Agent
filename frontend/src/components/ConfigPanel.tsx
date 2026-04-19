@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import type { Phase4Config, ExecutionMode } from '../types/phase34';
+import type { Phase4Config, ExecutionMode, SupervisorMode } from '../types/phase34';
 
 interface Props {
   onConfigChange?: (config: Phase4Config) => void;
@@ -32,6 +32,21 @@ const MODES: { id: ExecutionMode; label: string; desc: string; accent: string }[
     label: 'v2',
     desc: 'Full Phase 4 pipeline',
     accent: '#1e3a5f',
+  },
+];
+
+const SUPERVISOR_MODES: { id: SupervisorMode; label: string; desc: string; accent: string }[] = [
+  {
+    id: 'graph',
+    label: 'Graph',
+    desc: 'Deterministic LangGraph routing',
+    accent: '#1e3a5f',
+  },
+  {
+    id: 'llm_handoff',
+    label: 'LLM Handoff',
+    desc: 'Official LangGraph supervisor',
+    accent: '#065f46',
   },
 ];
 
@@ -66,6 +81,18 @@ const FEATURES = [
     icon: (
       <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
+    ),
+  },
+  {
+    key: 'auto_fill' as const,
+    label: 'Auto-fill',
+    desc: 'LLM auto-completes ambiguous fields',
+    color: '#0e7490',
+    icon: (
+      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707"/>
+        <circle cx="12" cy="12" r="4"/>
       </svg>
     ),
   },
@@ -162,6 +189,56 @@ export function ConfigPanel({ onConfigChange }: Props) {
                 <span
                   className="text-[11px] font-bold relative z-10"
                   style={active ? { color: mode.accent } : { color: '#78716c' }}
+                >
+                  {mode.label}
+                </span>
+                <span className="text-[9px] text-stone-400 leading-tight relative z-10">
+                  {mode.desc}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Supervisor mode */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-0.5 h-4 rounded-full" style={{ backgroundColor: activeMode.accent }} />
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-stone-400">
+            Supervisor
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {SUPERVISOR_MODES.map(mode => {
+            const active = config.supervisor_mode === mode.id;
+            return (
+              <button
+                key={mode.id}
+                onClick={() => update({ supervisor_mode: mode.id })}
+                className={`
+                  relative flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-xl border
+                  transition-all duration-150 cursor-pointer text-left overflow-hidden
+                  ${active
+                    ? 'border-2 shadow-sm'
+                    : 'border border-stone-200 hover:border-stone-300 hover:shadow-sm'
+                  }
+                `}
+                style={active ? {
+                  borderColor: mode.accent,
+                  backgroundColor: `${mode.accent}0a`,
+                  boxShadow: `0 0 0 1px ${mode.accent}20`,
+                } : {}}
+              >
+                {active && (
+                  <div
+                    className="absolute inset-0 opacity-5"
+                    style={{ background: `radial-gradient(ellipse at top left, ${mode.accent}, transparent 70%)` }}
+                  />
+                )}
+                <span
+                  className="text-[11px] font-bold relative z-10"
+                  style={active ? { color: mode.accent } : { color: '#44403c' }}
                 >
                   {mode.label}
                 </span>

@@ -12,8 +12,13 @@ from langchain_core.tools import tool
 
 # ─── SearXNG 配置 ────────────────────────────────────────────────────────────
 
-SEARXNG_BASE_URL = os.getenv("SEARXNG_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
+_DEFAULT_SEARXNG_BASE_URL = "http://127.0.0.1:8081"
 _SEARXNG_TIMEOUT = 15  # seconds
+
+
+def _get_searxng_base_url() -> str:
+    """Read SearXNG base URL at call time to avoid stale import-time env values."""
+    return os.getenv("SEARXNG_BASE_URL", _DEFAULT_SEARXNG_BASE_URL).strip().rstrip("/")
 
 
 def _searxng_search(
@@ -42,7 +47,8 @@ def _searxng_search(
 
     try:
         encoded = urllib.parse.urlencode(params)
-        url = f"{SEARXNG_BASE_URL}/search?{encoded}"
+        base_url = _get_searxng_base_url()
+        url = f"{base_url}/search?{encoded}"
         req = urllib.request.Request(
             url,
             headers={"User-Agent": "PaperReader/1.0"},

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Callable
@@ -114,7 +115,7 @@ class MCPToolchainHandler(SkillBackendHandler):
             arguments=inputs,
         )
         resp = await self._adapter.invoke(req)
-        return resp.result_summary
+        return resp.result_summary.get("result", resp.result_summary)
 
 
 class MCPPromptHandler(SkillBackendHandler):
@@ -144,7 +145,7 @@ class MCPPromptHandler(SkillBackendHandler):
             arguments=inputs,
         )
         resp = await self._adapter.invoke(req)
-        return resp.result_summary
+        return resp.result_summary.get("result", resp.result_summary)
 
 
 # ─── Skills Registry ─────────────────────────────────────────────────────────────
@@ -208,28 +209,6 @@ class SkillsRegistry:
         self.register_many(manifests)
         logger.info(f"[SkillsRegistry] Discovered {len(manifests)} skills from filesystem")
         return manifests
-
-    # ── Discovery ────────────────────────────────────────────────────────
-        """
-        从文件系统发现 skills（.agents/skills / .claude/skills）。
-
-        对应"发现 → 解析 → 目录注入"三环。
-        """
-        from src.skills.discovery import SkillsDiscovery
-
-        roots = roots or [
-            ".agents/skills",
-            ".claude/skills",
-        ]
-        discovery = SkillsDiscovery(roots=roots)
-        manifests = discovery.discover(base)
-        self.register_many(manifests)
-        logger.info(f"[SkillsRegistry] Discovered {len(manifests)} skills from filesystem")
-        return manifests
-
-    def unregister(self, skill_id: str) -> None:
-        self._manifests.pop(skill_id, None)
-        self._meta_cache.pop(skill_id, None)
 
     # ── Discovery ────────────────────────────────────────────────────────
 
@@ -306,7 +285,24 @@ class SkillsRegistry:
             backend=manifest.backend,
             output_artifact_ids=[],
             summary=result.get("summary") or f"Skill {req.skill_id} executed",
+            result=result,
         )
+
+    def run_sync(self, req: SkillRunRequest, context: dict) -> SkillRunResponse:
+        """同步上下文中执行 skill。"""
+
+        async def _runner() -> SkillRunResponse:
+            return await self.run(req, context)
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(_runner())
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(lambda: asyncio.run(_runner())).result()
 
     def _resolve_handler(self, manifest: SkillManifest) -> SkillBackendHandler:
         if manifest.backend == SkillBackend.LOCAL_GRAPH:
@@ -342,7 +338,7 @@ def get_skills_registry() -> SkillsRegistry:
         import os as _os
         base = _os.environ.get("SKILLS_SCAN_BASE", ".")
         _skills_registry.discover_from_filesystem(base)
-        # 3. 注册 research_skills 的 handler
+        # 3. 注册 research_skills / MCP handlers
         _register_research_skills_handlers(_skills_registry)
     return _skills_registry
 
@@ -355,13 +351,14 @@ def _workspace_policy_loader_stub(inputs: dict, context: dict) -> dict:
         "policy": {
             "naming_convention": "snake_case",
             "citation_format": "apa",
-            "report_language": "zh",
+            "report_language": "en",
         },
     }
 
 
 def _register_research_skills_handlers(registry: SkillsRegistry) -> None:
     """注册 research_skills.py 中的 skill 函数 handler。"""
+    from src.tools.mcp_adapter import get_mcp_adapter
     from src.skills.research_skills import (
         lit_review_scanner,
         claim_verification,
@@ -380,7 +377,7 @@ def _register_research_skills_handlers(registry: SkillsRegistry) -> None:
         # 兼容旧名
         "workspace_policy_loader": _workspace_policy_loader_stub,
     }
-    registry.set_handlers(functions=fn_map)
+    registry.set_handlers(functions=fn_map, mcp_adapter=get_mcp_adapter())
 
 
 def _register_builtin_skills(registry: SkillsRegistry) -> None:
@@ -504,4 +501,25 @@ def _register_builtin_skills(registry: SkillsRegistry) -> None:
         backend_ref="fn:writing_scaffold_generator",
         tags=["writing", "scaffold", "outline", "survey", "generation"],
         input_schema={"type": "object", "properties": {"topic": {"type": "string", "description": "Survey topic"}, "desired_length": {"type": "string", "enum": ["short", "medium", "long"], "default": "medium"}}, "required": ["topic"]},
+    ))
+
+    registry.register(SkillManifest(
+        skill_id="academic_review_writer_prompt",
+        name="Academic Review Writer Prompt",
+        description="Fetch an academic review-writing rubric and prompt scaffold from the MCP writing support server.",
+        backend=SkillBackend.MCP_PROMPT,
+        visibility=SkillVisibility.BOTH,
+        default_agent=AgentRole.ANALYST,
+        output_artifact_type="report_outline",
+        backend_ref="prompt:academic_review_writer",
+        tags=["writing", "mcp", "prompt", "survey", "review"],
+        input_schema={
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string"},
+                "time_range": {"type": "string"},
+                "focus_dimensions": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["topic"],
+        },
     ))

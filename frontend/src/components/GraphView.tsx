@@ -99,12 +99,24 @@ const REPORT_EDGE_DEFS: EdgeDef[] = [
 ];
 
 const RESEARCH_LAYOUT: LayoutEntry[] = [
-  { id: 'clarify', x: COL_CENTER, y: 2 * ROW_H },
-  { id: 'search_plan', x: COL_CENTER, y: 4 * ROW_H },
+  { id: 'clarify', x: COL_CENTER, y: 0 * ROW_H },
+  { id: 'search_plan', x: COL_CENTER, y: 1.2 * ROW_H },
+  { id: 'search', x: COL_CENTER, y: 2.4 * ROW_H },
+  { id: 'extract', x: COL_CENTER, y: 3.6 * ROW_H },
+  { id: 'extract_compression', x: COL_CENTER, y: 4.8 * ROW_H },
+  { id: 'draft', x: COL_CENTER, y: 6 * ROW_H },
+  { id: 'review', x: COL_CENTER, y: 7.2 * ROW_H },
+  { id: 'persist_artifacts', x: COL_CENTER, y: 8.4 * ROW_H },
 ];
 
 const RESEARCH_EDGE_DEFS: EdgeDef[] = [
   { source: 'clarify', target: 'search_plan', label: 'if no followup' },
+  { source: 'search_plan', target: 'search', label: 'full research' },
+  { source: 'search', target: 'extract' },
+  { source: 'extract', target: 'extract_compression' },
+  { source: 'extract_compression', target: 'draft' },
+  { source: 'draft', target: 'review' },
+  { source: 'review', target: 'persist_artifacts', label: 'if passed' },
 ];
 
 function makeNodeStyle(st: (typeof STATUS_STYLES)[NodeStatus], isRunning: boolean) {

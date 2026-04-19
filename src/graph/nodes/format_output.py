@@ -78,10 +78,12 @@ def format_output(state: dict) -> dict:
     grounding = _compute_grounding_stats(source.claims, source.citations)
 
     if grounding.total_claims > 0:
-        support_ratio = (grounding.grounded + grounding.partial) / grounding.total_claims
-        if support_ratio >= 0.8:
+        grounded_ratio = grounding.grounded / grounding.total_claims
+        partial_ratio = grounding.partial / grounding.total_claims
+        ungrounded_ratio = grounding.ungrounded / grounding.total_claims
+        if grounded_ratio >= 0.8 and partial_ratio <= 0.2 and ungrounded_ratio == 0.0:
             grounding_confidence = "high"
-        elif support_ratio >= 0.5:
+        elif grounded_ratio >= 0.5 and ungrounded_ratio <= 0.2:
             grounding_confidence = "limited"
         else:
             grounding_confidence = "low"

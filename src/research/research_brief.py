@@ -80,6 +80,11 @@ class ClarifyInput(BaseModel):
         default_factory=list,
         description="Short text summaries of uploaded sources (PDF metadata, etc.)",
     )
+    auto_fill: bool = Field(
+        default=False,
+        description="If True, LLM will auto-complete ambiguous fields in the brief "
+        "instead of setting needs_followup=True. User confirmation is skipped.",
+    )
 
 
 class ClarifyResult(BaseModel):

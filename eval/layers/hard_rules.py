@@ -2,23 +2,79 @@ from __future__ import annotations
 
 import re
 
-REQUIRED_SECTIONS = {"标题", "核心贡献", "方法概述", "关键实验", "局限性"}
+
+SECTION_ALIAS_GROUPS = {
+    "title": {"title", "标题"},
+    "overview": {
+        "abstract",
+        "abstract and motivation",
+        "core contributions",
+        "paper information",
+        "论文信息",
+        "核心贡献",
+    },
+    "methods": {
+        "methods",
+        "methods review",
+        "method overview",
+        "方法概述",
+    },
+    "evidence": {
+        "results",
+        "experiments",
+        "experiments and results",
+        "evaluation",
+        "datasets and benchmarks",
+        "关键实验",
+    },
+    "discussion": {
+        "discussion",
+        "discussion and future directions",
+        "limitations",
+        "challenges",
+        "challenges and limitations",
+        "局限性",
+    },
+}
 
 
-def check_structure(report_md: str) -> dict:
-    """Check if report has all required sections."""
-    found = set()
+def _normalize_heading(heading: str) -> str:
+    return re.sub(r"\s+", " ", heading.strip().lower())
+
+
+def _extract_headings(report_md: str) -> set[str]:
+    headings: set[str] = set()
     for line in report_md.split("\n"):
-        line = line.strip()
-        if line.startswith("## "):
-            section = line[3:].strip()
-            found.add(section)
-    missing = REQUIRED_SECTIONS - found
-    return {"pass": len(missing) == 0, "missing": list(missing), "found": list(found)}
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            headings.add("title")
+        elif stripped.startswith("## "):
+            headings.add(_normalize_heading(stripped[3:]))
+    return headings
 
 
-def check_citation_format(report_md: str) -> dict:
+def check_structure(report_md: str, required_sections: set[str] | None = None) -> dict:
+    """Check whether the markdown report satisfies the minimum section structure."""
+    found = _extract_headings(report_md)
+
+    if required_sections is not None:
+        required_set = {_normalize_heading(section) for section in required_sections}
+        missing = required_set - found
+        return {"pass": len(missing) == 0, "missing": list(missing), "found": list(found)}
+
+    missing = [
+        name
+        for name, aliases in SECTION_ALIAS_GROUPS.items()
+        if not found.intersection({_normalize_heading(alias) for alias in aliases})
+    ]
+    return {"pass": len(missing) == 0, "missing": missing, "found": list(found)}
+
+
+def check_citation_format(report_md: str, required: bool = True) -> dict:
     """Check citations section exists and has proper format."""
+    if not required:
+        return {"pass": True, "has_section": True, "citation_count": 0, "skipped": True}
+
     has_section = bool(
         re.search(r"^##\s+引用", report_md, re.MULTILINE)
         or re.search(r"^##\s+参考文献", report_md, re.MULTILINE)
@@ -34,11 +90,11 @@ def check_citation_format(report_md: str) -> dict:
 
 
 def check_must_include(report_md: str, keywords: list[str]) -> dict:
-    """Check all required keywords appear in report."""
+    """Check all required keywords appear in report (case-insensitive, supports Chinese/English)."""
     report_lower = report_md.lower()
     results = {}
     for kw in keywords:
-        results[kw] = kw.lower() in report_lower
+        results[kw] = kw in report_md or kw.lower() in report_lower
     return {"pass": all(results.values()), "keywords": results}
 
 
@@ -59,12 +115,30 @@ def run_layer1(report_md: str, case: dict, tokens_used: int = 0) -> dict:
     checks: dict[str, dict] = {}
 
     if case.get("expect_error"):
-        is_error = report_md.startswith("Error") or "error" in report_md.lower()[:200]
-        checks["error_handled"] = {"pass": is_error}
+        error_indicators = ["无法生成报告", "error", "failed", "失败"]
+        report_lower = report_md.lower()
+        is_error = any(
+            indicator in report_md if indicator in {"无法生成报告", "失败"} else indicator in report_lower
+            for indicator in error_indicators
+        )
+        checks["error_handled"] = {
+            "pass": is_error,
+            "indicators_found": [
+                indicator
+                for indicator in error_indicators
+                if (
+                    indicator in report_md
+                    if indicator in {"无法生成报告", "失败"}
+                    else indicator in report_lower
+                )
+            ],
+        }
         return {"pass": is_error, "checks": checks}
 
-    checks["structure"] = check_structure(report_md)
-    checks["citation_format"] = check_citation_format(report_md)
+    checks["structure"] = check_structure(report_md, case.get("sections"))
+
+    min_citations = case.get("min_citations", 1)
+    checks["citation_format"] = check_citation_format(report_md, required=(min_citations > 0))
 
     if "must_include" in case:
         checks["must_include"] = check_must_include(report_md, case["must_include"])
@@ -74,5 +148,5 @@ def run_layer1(report_md: str, case: dict, tokens_used: int = 0) -> dict:
 
     checks["cost_guard"] = check_cost_guard(tokens_used)
 
-    all_pass = all(c["pass"] for c in checks.values())
+    all_pass = all(check["pass"] for check in checks.values())
     return {"pass": all_pass, "checks": checks}

@@ -7,7 +7,9 @@ import concurrent.futures
 import logging
 from typing import Any
 
-from src.models.review import CoverageGap, ReviewFeedback, ReviewIssue, ReviewSeverity
+from src.models.agent import AgentRole
+from src.models.report import DraftReport
+from src.models.review import CoverageGap, ReviewFeedback, ReviewIssue, ReviewSeverity, ReviewCategory
 from src.research.services.reviewer import ReviewerService
 from src.research.services.grounding import ground_draft_report
 from src.tasking.trace_wrapper import trace_node, trace_tool, get_trace_store
@@ -32,6 +34,62 @@ def _run_reviewer_sync(**kwargs) -> ReviewFeedback:
         return pool.submit(_runner).result()
 
 
+def _run_claim_verification_skill(
+    *,
+    workspace_id: str,
+    task_id: str,
+    draft_report: Any,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    from src.models.skills import SkillRunRequest
+    from src.skills.registry import get_skills_registry
+
+    registry = get_skills_registry()
+    req = SkillRunRequest(
+        workspace_id=workspace_id,
+        task_id=task_id,
+        skill_id="claim_verification",
+        inputs={"draft_report": _serialize_report_payload(draft_report)},
+        preferred_agent=AgentRole.REVIEWER,
+    )
+    resp = registry.run_sync(req, {"workspace_id": workspace_id, "task_id": task_id})
+    return resp.result, [{"skill_id": "claim_verification", "backend": resp.backend.value, "summary": resp.summary}]
+
+
+def _serialize_report_payload(report: Any) -> dict[str, Any]:
+    if report is None:
+        return {}
+    if isinstance(report, dict):
+        return report
+    if hasattr(report, "model_dump"):
+        return report.model_dump(mode="json")
+    return {}
+
+
+def _coerce_draft_report(report: Any) -> Any:
+    if isinstance(report, DraftReport):
+        return report
+    if not isinstance(report, dict):
+        return report
+
+    sections = report.get("sections")
+    if not isinstance(sections, dict):
+        sections = {
+            key: value
+            for key, value in report.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+    claims = report.get("claims", [])
+    citations = report.get("citations", [])
+    try:
+        return DraftReport(
+            sections=sections or {},
+            claims=list(claims) if isinstance(claims, list) else [],
+            citations=list(citations) if isinstance(citations, list) else [],
+        )
+    except Exception:
+        return report
+
+
 @trace_node(node_name="review", stage="review", store=get_trace_store())
 def review_node(state: dict) -> dict:
     """
@@ -51,9 +109,12 @@ def review_node(state: dict) -> dict:
     rag_result = state.get("rag_result")
     paper_cards = state.get("paper_cards") or []
     draft_report = state.get("draft_report")
+    draft_report = _coerce_draft_report(draft_report)
     report_draft = draft_report or state.get("draft_markdown")
     grounding_result: dict[str, Any] = {}
     grounding_warnings: list[str] = []
+    skill_trace: list[dict[str, Any]] = []
+    claim_verification: dict[str, Any] = {}
 
     if draft_report is not None:
         import logging as _logging
@@ -138,10 +199,29 @@ def review_node(state: dict) -> dict:
             summary=f"Reviewer service error: {exc}",
         )
 
+    grounded_report_for_skill = (
+        grounding_result.get("verified_report")
+        or grounding_result.get("final_report")
+        or grounding_result.get("draft_report")
+        or report_draft
+    )
+    if grounded_report_for_skill is not None and workspace_id and task_id:
+        try:
+            claim_verification, skill_entries = _run_claim_verification_skill(
+                workspace_id=workspace_id,
+                task_id=task_id,
+                draft_report=grounded_report_for_skill,
+            )
+            skill_trace.extend(skill_entries)
+        except Exception as exc:  # noqa: BLE001
+            grounding_warnings.append(f"claim verification skill failed: {exc}")
+
     result = {
         **grounding_result,
         "review_feedback": feedback,
         "review_passed": feedback.passed,
+        "claim_verification": claim_verification,
+        "skill_trace": skill_trace,
     }
     if grounding_warnings:
         result["warnings"] = grounding_warnings

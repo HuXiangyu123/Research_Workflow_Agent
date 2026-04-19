@@ -17,7 +17,9 @@ from src.db.task_persistence import (
     load_task_report,
     load_task_snapshot,
     reset_task_persistence_state,
+    upsert_task_snapshot,
 )
+from src.models.task import TaskRecord, TaskStatus
 
 
 def _setup_mocks():
@@ -189,3 +191,45 @@ def test_task_report_is_persisted_and_reloadable(postgres_persistence):
     finally:
         for m in mocks.values():
             m.stop()
+
+
+@pytest.mark.task_persistence
+def test_task_snapshot_round_trips_extended_research_fields(postgres_persistence):
+    task = TaskRecord(
+        status=TaskStatus.COMPLETED,
+        input_type="research",
+        input_value="Survey biomedical LLM agents",
+        report_mode="draft",
+        source_type="research",
+        auto_fill=True,
+        workspace_id="ws_persist_roundtrip",
+        result_markdown="# Report",
+        brief={"topic": "biomedical LLM agents"},
+        search_plan={"plan_goal": "collect evidence"},
+        rag_result={"paper_candidates": [{"title": "Paper A"}]},
+        paper_cards=[{"title": "Paper A"}],
+        compression_result={
+            "taxonomy": {"categories": [{"name": "Agentic RAG"}]},
+            "compressed_cards": [{"title": "Paper A"}],
+            "evidence_pools": {"methods": ["e1"]},
+        },
+        taxonomy={"categories": [{"name": "Agentic RAG"}]},
+        awaiting_followup=False,
+        followup_resolution={"auto_fill_triggered": True, "reason": "non_interactive"},
+        review_passed=True,
+    )
+    postgres_persistence.append(task.task_id)
+
+    assert upsert_task_snapshot(task) is True
+
+    loaded = load_task_snapshot(task.task_id)
+    assert loaded is not None
+    assert loaded.auto_fill is True
+    assert loaded.compression_result is not None
+    assert loaded.compression_result["evidence_pools"]["methods"] == ["e1"]
+    assert loaded.taxonomy == {"categories": [{"name": "Agentic RAG"}]}
+    assert loaded.awaiting_followup is False
+    assert loaded.followup_resolution == {
+        "auto_fill_triggered": True,
+        "reason": "non_interactive",
+    }

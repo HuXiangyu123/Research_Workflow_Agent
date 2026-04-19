@@ -8,5 +8,16 @@
 - Frontend stack: React 19, TypeScript 5, Vite 8, Tailwind CSS 4, `@xyflow/react`.
 - Tests should follow the production stack and avoid SQLite-only shortcuts.
 - If env vars are required in scripts/tests, load `.env` explicitly with `load_dotenv(".env")`.
+- Before running any full-flow / end-to-end test, run `python tests/api/check_env_gpt_models.py` first and confirm GPT model connectivity passes.
 - Do not put fast-changing workflow topology or architecture notes in this file; keep current architecture and usage docs under `docs/`.
 - When implementing public API integrations or external service calls, research and reference publicly available repositories and official examples for best practices before implementation.
+
+## LangGraph Implementation Rules
+
+- **Node orchestration**: Must use `langgraph.graph.StateGraph`, never use Python `for`/`while` loops to simulate graph execution.
+- **State persistence**: Must use `langgraph.checkpoint.*` (PostgresSaver / MemorySaver), never use JSON files for durable state.
+- **Agent building**: Prefer `langgraph.prebuilt.chat_agent`, `create_react_agent`, or `langgraph_sdk.Agent`, never build agent loops from scratch.
+- **Memory**: Must use `langgraph.checkpoint.base.BaseCheckpointSaver`, never implement custom multi-layer memory (SensoryMemory / WorkingMemory / SemanticMemory / EpisodicMemory).
+- **Multi-agent supervisor**: Must use `langgraph.supervisor` or `langgraph_sdk.multi_agent`, never implement supervisor logic with Python class + dispatch pattern.
+- **Before implementing**: When adding new nodes, agents, or orchestration logic, always check if LangGraph / LangChain has an official API for it first. If yes, use the official API. If no, get approval before custom implementation.
+- **Existing violations to fix**: `src/memory/manager.py` (custom JSON memory), `src/research/agents/supervisor.py` (manual for-loop collaboration), `src/research/agents/*.py` (custom agent class patterns) — these should be migrated to LangGraph/LangChain official patterns.

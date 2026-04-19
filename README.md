@@ -1,8 +1,14 @@
-# PaperReader Agent
+# Research_Workflow_Agent
 
 > 面向科研场景的多阶段 LLM Agent 系统：输入研究主题，自动完成需求澄清 → 检索规划 → 多源论文获取 → 结构化抽取 → 上下文压缩 → 综述生成 → Review 把关 → 报告持久化，输出带可追溯引用的结构化 Markdown 综述报告。
 
 ---
+
+
+
+![nano_task_759047f6e35e4a46a735849d36ca87ae](/Users/artorias/Desktop/nano_task_759047f6e35e4a46a735849d36ca87ae.png)
+
+
 
 ## 核心功能
 
@@ -169,6 +175,3 @@ PaperReader Agent/
 
 ---
 
-## License
-
-MIT

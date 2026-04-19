@@ -1,0 +1,11 @@
+{
+  "rows": [
+    {
+      "paper": "Paper title",
+      "methods": "Method family",
+      "datasets": "Dataset names",
+      "benchmarks": "Metrics or benchmarks",
+      "limitations": "Known limitations"
+    }
+  ]
+}

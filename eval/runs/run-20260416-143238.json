@@ -1,0 +1,74 @@
+{
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "errors": 0
+  },
+  "results": [
+    {
+      "id": "research-single",
+      "type": "research",
+      "mode": "research",
+      "task_id": "8b5148a1-645a-4716-b82c-7761b98ff036",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "核心贡献",
+              "标题",
+              "局限性",
+              "关键实验",
+              "方法概述"
+            ],
+            "found": [
+              "Taxonomy",
+              "Datasets",
+              "Abstract",
+              "Methods",
+              "Evaluation",
+              "Introduction",
+              "相关研究背景",
+              "References",
+              "Discussion",
+              "Conclusion",
+              "Future Work",
+              "Background"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 19
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {}
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 10,
+            "required": 5
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 314.12,
+      "report_length": 10653
+    }
+  ],
+  "config": {
+    "mode": "research",
+    "use_api": false,
+    "layer": 1,
+    "cases_path": "eval/cases.jsonl",
+    "research_topic": "AI Agent 在医学领域的发展"
+  },
+  "timestamp": "2026-04-16T14:32:38.716889"
+}

@@ -18,7 +18,7 @@ def survey_intro_outline(state: dict) -> dict:
         f"Published: {meta.published}\n"
         f"Abstract: {meta.abstract}\n\n"
         f"Full document text:\n{doc.document_text}\n\n"
-        "Generate intro translation + survey outline JSON."
+        "Generate an English introduction summary and survey outline as JSON."
     )
 
     try:

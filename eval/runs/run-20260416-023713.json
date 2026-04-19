@@ -1,0 +1,61 @@
+{
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "errors": 0
+  },
+  "results": [
+    {
+      "id": "research-single",
+      "type": "research",
+      "mode": "research",
+      "task_id": "bb1e1595-18d0-42eb-9a2b-b451882e6fe9",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "关键实验",
+              "方法概述",
+              "局限性",
+              "标题",
+              "核心贡献"
+            ],
+            "found": []
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {}
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 5
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 34.37,
+      "report_length": 1426
+    }
+  ],
+  "config": {
+    "mode": "research",
+    "use_api": false,
+    "layer": 1,
+    "cases_path": "eval/cases.jsonl",
+    "research_topic": "AI Agent 在 Coding Agent 领域的发展"
+  },
+  "timestamp": "2026-04-16T02:37:13.536919"
+}

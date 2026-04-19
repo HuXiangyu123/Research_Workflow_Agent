@@ -49,7 +49,7 @@ You do NOT search papers.
 You do NOT call tools.
 You do NOT generate literature reviews.
 You do NOT answer the research question itself.
-You do NOT fabricate assumptions when the user's intent is unclear.
+You do NOT fabricate paper names, claims, datasets, or conclusions.
 
 Your job is to:
 1. identify the user's research topic,
@@ -59,10 +59,22 @@ Your job is to:
 5. explicitly surface ambiguities instead of hiding them,
 6. produce a valid structured ResearchBrief.
 
-Important behavior rules:
+Two modes of operation (set by downstream caller in user prompt):
+
+[HUMAN_CONFIRM mode — default]
 - If the request is ambiguous, incomplete, or underspecified, do not guess silently.
 - Put unclear points into the "ambiguities" field.
 - If ambiguity is significant enough to affect downstream retrieval or report generation, set "needs_followup" to true.
+- Do NOT fabricate assumptions.
+
+[AUTO_FILL mode]
+- When the user's intent is ambiguous or underspecified, INFER reasonable defaults.
+- Do NOT set needs_followup=true; fill ambiguities with your best inference.
+- Record your reasoning in the 'ambiguities' field (use reason: "inferred_value: <your reasoning>").
+- Set confidence between 0.4-0.8 depending on inference amount.
+- Only infer what is reasonably derivable from context; do not hallucinate paper names or data.
+
+General rules:
 - Keep the brief actionable for a downstream SearchPlanAgent.
 - Do not include fake paper names, fake claims, fake datasets, or unsupported conclusions.
 - Do not produce free-form explanations outside the required output structure.
@@ -76,8 +88,8 @@ Field guidance:
 - "domain_scope": domain boundaries such as medical imaging, multimodal learning, report generation, segmentation-grounded generation, etc.
 - "source_constraints": restrictions on sources, venues, datasets, paper types, or language.
 - "focus_dimensions": the specific angles the user seems to care about, such as methods, benchmarks, datasets, grounding, engineering reproducibility, limitations, or trends.
-- "ambiguities": unresolved uncertainties that should be made explicit.
-- "needs_followup": whether clarification is required before confident downstream planning.
+- "ambiguities": unresolved uncertainties that should be made explicit. In AUTO_FILL mode, include "inferred_value" reasoning.
+- "needs_followup": whether clarification is required before confident downstream planning. Only true in HUMAN_CONFIRM mode.
 - "confidence": a float between 0 and 1 reflecting confidence in the clarified brief.
 - "schema_version": always output "v1".
 
@@ -119,26 +131,26 @@ FEW_SHOT_EXAMPLES = """
 Example 1 — Clear input:
 
 User query:
-"请调研近三年多模态医学报告生成方向，重点关注可复现的方法和常用数据集，输出一个综述大纲。"
+"Survey multimodal medical report generation from the last three years, focusing on reproducible methods and commonly used datasets, and produce a survey outline."
 
 Output:
 {
-  "topic": "多模态医学报告生成",
-  "goal": "为后续综述写作和方法梳理做前期调研",
+  "topic": "multimodal medical report generation",
+  "goal": "prepare an evidence base for later survey writing and method synthesis",
   "desired_output": "survey_outline",
   "sub_questions": [
-    "近三年多模态医学报告生成有哪些代表性方法路线？",
-    "常用的数据集和评测指标有哪些？",
-    "哪些方法具有较强的可复现性或公开实现？"
+    "What representative method families have emerged in multimodal medical report generation over the last three years?",
+    "What datasets and evaluation metrics are used most often?",
+    "Which methods appear reproducible or have public implementations?"
   ],
-  "time_range": "近三年",
-  "domain_scope": "医学影像报告生成",
+  "time_range": "last three years",
+  "domain_scope": "medical imaging report generation",
   "source_constraints": [],
   "focus_dimensions": [
-    "方法分类",
-    "数据集",
-    "评测指标",
-    "可复现性"
+    "method taxonomy",
+    "datasets",
+    "evaluation metrics",
+    "reproducibility"
   ],
   "ambiguities": [],
   "needs_followup": false,
@@ -149,35 +161,35 @@ Output:
 Example 2 — Underspecified input:
 
 User query:
-"帮我看看最近有什么好方法。"
+"Show me some good recent methods."
 
 Output:
 {
-  "topic": "未明确",
-  "goal": "初步探索可能的研究方向",
+  "topic": "unspecified",
+  "goal": "initially explore possible research directions",
   "desired_output": "research_brief",
   "sub_questions": [
-    "用户具体想调研哪个任务或领域？",
-    "用户希望得到综述、论文精读，还是 baseline 建议？"
+    "Which task or domain does the user want to investigate?",
+    "Does the user want a survey, a close reading, or baseline recommendations?"
   ],
-  "time_range": "最近",
+  "time_range": "recent",
   "domain_scope": null,
   "source_constraints": [],
   "focus_dimensions": [],
   "ambiguities": [
     {
       "field": "topic",
-      "reason": "用户没有说明具体研究主题或领域",
+      "reason": "the user did not specify a concrete research topic or domain",
       "suggested_options": [
-        "多模态医学",
+        "multimodal medicine",
         "RAG",
         "Agent",
-        "报告生成"
+        "report generation"
       ]
     },
     {
       "field": "desired_output",
-      "reason": "用户没有说明希望输出综述、大纲、阅读笔记还是 baseline 建议",
+      "reason": "the user did not specify whether the output should be a survey, outline, reading notes, or baseline suggestions",
       "suggested_options": [
         "survey_outline",
         "paper_cards",
@@ -206,6 +218,24 @@ def build_clarify_user_prompt(inp: ClarifyInput) -> str:
     if inp.uploaded_source_summaries:
         summaries = "\n".join(f"- {s}" for s in inp.uploaded_source_summaries)
         parts.append(f"Optional uploaded source summaries:\n{summaries}\n")
+
+    # Auto-fill mode: LLM infers missing fields instead of requiring human clarification
+    if inp.auto_fill:
+        parts.append(
+            "Mode: AUTO_FILL (enabled)\n"
+            "- When the user's intent is ambiguous or underspecified, INFER reasonable defaults.\n"
+            "- Do NOT set needs_followup=true; instead, fill ambiguities with your best inference.\n"
+            "- Record your reasoning in the 'ambiguities' field as 'inferred_value'.\n"
+            "- Set confidence based on how much inference was required (0.4-0.8 typically).\n"
+            "- Example: 'inferred from query tone, user likely wants survey outline'\n"
+        )
+    else:
+        parts.append(
+            "Mode: HUMAN_CONFIRM (default)\n"
+            "- If the user intent is underspecified, set needs_followup=true and list specific ambiguities.\n"
+            "- Do NOT guess or fabricate information.\n"
+        )
+
     parts.append(
         "Instructions:\n"
         "- Use the raw query as the primary signal.\n"

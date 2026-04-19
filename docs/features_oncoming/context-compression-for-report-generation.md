@@ -1,8 +1,21 @@
 # Context Compression for Report Generation Pipeline
 
 > 生成时间：2026-04-14
-> 状态：**设计文档**（待实现）
+> 状态：**Phase 1-3 已实现**（见下文）
 > 优先级：P0（直接改善报告质量的核心问题）
+
+---
+
+## 实现状态
+
+| 阶段 | 内容 | 状态 | 文件 |
+|------|------|------|------|
+| Phase 1 | `Taxonomy` + `CompressedCard` + `EvidencePool` 模型 | **✅ 完成** | `src/models/compression.py` |
+| Phase 2 | 压缩服务核心实现（`_build_taxonomy` + `_build_compressed_abstracts` + `_build_evidence_pools`） | **✅ 完成** | `src/research/services/compression.py` |
+| Phase 3 | `extract_compression_node` 节点 | **✅ 完成** | `src/research/graph/nodes/extract_compression.py` |
+| Phase 4 | `draft_node` 使用压缩上下文 | **✅ 完成** | `src/research/graph/nodes/draft.py` |
+| Phase 5 | Research Graph 注册新节点 | **✅ 完成** | `src/research/graph/builder.py` |
+| Phase 6 | AgentState 增加字段 | **✅ 完成** | `src/graph/state.py` |
 
 ---
 

@@ -1,70 +1,97 @@
 # PaperReader Agent — 技术文档总览
 
-> 本目录按技术模块拆分，每个模块一份独立文档，包含代码流程、技术栈选型、量化指标。
+> 这套文档只描述当前仓库真实实现，不再沿用旧设计想象图。  
+> 阅读目标：把项目讲清楚，把代码讲清楚，把“用了什么方法、怎么做”讲清楚。
 
----
+## 目录
 
-## 目录结构
-
-```
+```text
 docs/面试/tech_part/
-├── README.md                        ← 本文件
-├── 01-项目概览.md                   ← 项目定位、业务背景、技术栈总览
-├── 02-技术栈.md                     ← 核心技术栈选型详解
-├── 03-工作流架构.md                ← Research Graph 7 节点工作流
-├── 04-多智能体协作.md              ← Multi-Agent 协作体系
-├── 05-Memory系统.md                ← 短期/工作区/长期记忆
-├── 06-RAG检索架构.md               ← 三层检索 + Reranker
-├── 07-Grounding验证体系.md          ← 三段式引用验证
-├── 08-评测体系.md                  ← Layer 1/2/3 分层评测
-├── 09-工具与Skills.md              ← 工具注册 + Skills 框架 + MCP
-├── 10-CircuitBreaker设计.md         ← 熔断器实现分析（已实现）
-├── 11-ContextCompression设计.md      ← 上下文压缩设计（待实现）
-└── 12-EntropyManagement设计.md       ← 熵管理系统设计（待实现）
+├── README.md
+├── 01-项目概览.md
+├── 02-技术栈.md
+├── 03-工作流架构.md
+├── 04-多智能体协作.md
+├── 05-Memory系统.md
+├── 06-RAG检索架构.md
+├── 07-Grounding验证体系.md
+├── 08-评测体系.md
+├── 09-工具与Skills.md
+├── 10-CircuitBreaker设计.md
+├── 11-ContextCompression设计.md
+└── 12-EntropyManagement设计.md
 ```
 
----
+## 这次更新的写法约束
 
-## 快速导航
+本目录现在统一采用下面这套结构：
 
-### 已实现技术（生产可用）
+1. 先说模块在项目里的真实职责。
+2. 再给出工作流图或结构图。
+3. 明确写出“用了什么方法（Use What）”。
+4. 明确写出“当前项目怎么做（How To Do）”。
+5. 每篇至少放 1 到 3 段真实代码块，而不是只写概念解释。
 
-| 模块 | 文档 | 成熟度 |
-|------|------|--------|
-| Research Graph 工作流 | [03-工作流架构.md](03-工作流架构.md) | ✅ 生产可用 |
-| Multi-Agent 协作 | [04-多智能体协作.md](04-多智能体协作.md) | ✅ Supervisor 实现 |
-| 三源检索 | [06-RAG检索架构.md](06-RAG检索架构.md) | ✅ 三源并行 |
-| Citation Resolution | [07-Grounding验证体系.md](07-Grounding验证体系.md) | ✅ 生产可用 |
-| 三层 Eval | [08-评测体系.md](08-评测体系.md) | ✅ Layer 1/2 |
-| Skills 框架 | [09-工具与Skills.md](09-工具与Skills.md) | ✅ 9 个内置 skills |
-| Circuit Breaker | [10-CircuitBreaker设计.md](10-CircuitBreaker设计.md) | ✅ 已实现 |
-| MCP Adapter | [09-工具与Skills.md](09-工具与Skills.md) | ✅ stdio+HTTP transport |
+## 推荐阅读顺序
 
-### 待实现特性
+如果只想先把项目主链讲清楚，按下面顺序看：
 
-| 特性 | 文档 | 优先级 |
-|------|------|--------|
-| Context Compression | [11-ContextCompression设计.md](11-ContextCompression设计.md) | P0 |
-| Entropy Management | [12-EntropyManagement设计.md](12-EntropyManagement设计.md) | P1 |
-| 动态 Re-plan 机制 | — | P1 |
-| DAG fan-out 并行 | — | P2 |
+1. `01-项目概览.md`
+2. `03-工作流架构.md`
+3. `06-RAG检索架构.md`
+4. `04-多智能体协作.md`
+5. `07-Grounding验证体系.md`
+6. `09-工具与Skills.md`
 
----
+## 当前最重要的五条技术主线
 
-## 技术文档撰写规范
+### 1. 任务 API + workspace-first
 
-每份技术文档包含：
+- 入口是真实 `/tasks`，不是旧 CLI。
+- 用户先创建 task，再看 SSE，再看 `output/workspaces/` 和 `/tasks/{id}/result`。
 
-1. **技术选型理由** — 为什么用这个技术，解决了什么问题
-2. **核心代码流程** — 关键函数的代码块（带行号引用）
-3. **架构流图** — 用文字描述关键流程
-4. **量化指标** — 有 metrics 的模块必须分析数值和 benchmark
-5. **技术优势** — 该技术带来的具体收益
+### 2. 双工作流
 
----
+- Report workflow：单篇论文报告。
+- Research workflow：topic-driven survey 工作流。
 
-## 更新记录
+### 3. RAG 不是单步问答
 
-| 日期 | 更新内容 |
-|------|---------|
-| 2026-04-14 | 初始创建，按 12 个模块拆分 |
+- 当前实现不是“检索后直接回答”。
+- 而是 `clarify/search_plan -> search -> extract -> extract_compression -> draft -> review`。
+
+### 4. 多智能体协作已经落到官方 supervisor
+
+- 当前主口径应当是 `create_supervisor + create_react_agent + staged workers`。
+- 不是“完全自由自治的 agent society”。
+
+### 5. 质量门不是口头说说
+
+- Draft 后面还有 grounding、claim verification、review gate、confidence 计算。
+- 这也是为什么检索质量提升后，报告仍然可能被 review 挡住。
+
+## 这套文档适合怎么用
+
+### 用于面试
+
+- 先读 `01/03/06/07`，把主链讲熟。
+- 再按面试官方向补 `04/05/08/09/10/11/12`。
+
+### 用于项目宣传
+
+- `01` 负责讲项目是什么。
+- `03` 负责讲双工作流。
+- `04` 负责讲多 agent。
+- `06` 负责讲 RAG 深度。
+- `07` 负责讲可信输出。
+
+### 用于代码走读
+
+- 每篇文档都已经把关键代码段贴出来。
+- 建议一边看文档，一边打开对应实现文件核对。
+
+## 当前已知边界
+
+- 这些文档以 2026-04-19 仓库状态为准。
+- 部分辅助模块仍有迁移中的兼容层，例如 `src/memory/manager.py`、supervisor 的 facade。
+- 文档会明确区分“当前主链已经使用”和“仓库中存在但不是主路径”。

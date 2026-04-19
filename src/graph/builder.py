@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
 
+from src.agent.checkpointing import get_langgraph_checkpointer
 from src.graph.callbacks import NodeEventEmitter
 from src.graph.instrumentation import instrument_node
 from src.graph.nodes.apply_policy import apply_policy
@@ -44,7 +45,11 @@ def _has_draft(state: dict) -> str:
     return "format_output"
 
 
-def build_report_graph(event_emitter: NodeEventEmitter | None = None):
+def build_report_graph(
+    event_emitter: NodeEventEmitter | None = None,
+    *,
+    use_checkpointer: bool = False,
+):
     g = StateGraph(AgentState)
 
     g.add_node("input_parse", instrument_node("input_parse", input_parse, event_emitter))
@@ -128,4 +133,6 @@ def build_report_graph(event_emitter: NodeEventEmitter | None = None):
     g.add_edge("apply_policy", "format_output")
     g.add_edge("format_output", END)
 
+    if use_checkpointer:
+        return g.compile(checkpointer=get_langgraph_checkpointer("report_graph"))
     return g.compile()

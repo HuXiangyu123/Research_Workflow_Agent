@@ -37,6 +37,36 @@ def run_search_plan_node(state: dict) -> SearchPlanNodeOutput:
             current_stage="search_plan_failed",
         )
 
+    if state.get("awaiting_followup"):
+        return SearchPlanNodeOutput(
+            search_plan=None,
+            search_plan_warnings=[
+                "Clarify requested follow-up in interactive mode; search planning paused"
+            ],
+            current_stage="clarify_followup_required",
+        )
+
+    # Use fallback plan when:
+    # 1. needs_followup=True (clarify flagged ambiguity)
+    # 2. confidence is low (<0.5)
+    # 3. explicit use_heuristic flag
+    needs_followup = brief.get("needs_followup", False)
+    confidence = brief.get("confidence", 1.0)
+    use_heuristic = state.get("use_heuristic", False) or needs_followup or confidence < 0.5
+
+    if use_heuristic:
+        from src.research.policies.search_plan_policy import to_fallback_plan
+
+        plan = to_fallback_plan(brief)
+        warnings = ["SearchPlanAgent fast path used heuristic fallback plan"]
+        if needs_followup:
+            warnings.append(f"Brief flagged needs_followup=True (confidence={confidence:.2f})")
+        return SearchPlanNodeOutput(
+            search_plan=plan.model_dump(mode="json"),
+            search_plan_warnings=warnings,
+            current_stage="search_plan",
+        )
+
     try:
         result = run(brief, emit_progress=emit_progress)
         logger.info(
@@ -51,9 +81,12 @@ def run_search_plan_node(state: dict) -> SearchPlanNodeOutput:
             current_stage="search_plan",
         )
     except Exception:
-        logger.exception("SearchPlanAgent raised unhandled exception")
+        logger.exception("SearchPlanAgent raised unhandled exception, falling back to heuristic")
+        from src.research.policies.search_plan_policy import to_fallback_plan
+
+        plan = to_fallback_plan(brief)
         return SearchPlanNodeOutput(
-            search_plan=None,
-            search_plan_warnings=["SearchPlanAgent crashed"],
-            current_stage="search_plan_failed",
+            search_plan=plan.model_dump(mode="json"),
+            search_plan_warnings=["SearchPlanAgent crashed, used fallback plan"],
+            current_stage="search_plan",
         )

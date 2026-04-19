@@ -1,0 +1,960 @@
+{
+  "summary": {
+    "total": 21,
+    "passed": 13,
+    "failed": 8,
+    "errors": 0
+  },
+  "results": [
+    {
+      "id": "arxiv-01",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-1706.03762-1776294383",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "Transformer": true,
+              "attention": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 40.34,
+      "report_length": 1057
+    },
+    {
+      "id": "arxiv-02",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-1810.04805-1776294423",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "BERT": true,
+              "pre-training": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 46.54,
+      "report_length": 1405
+    },
+    {
+      "id": "arxiv-03",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-2005.14165-1776294470",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "GPT-3": true,
+              "language model": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 40.06,
+      "report_length": 1108
+    },
+    {
+      "id": "arxiv-04",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-2010.11929-1776294510",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "ViT": true,
+              "vision": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 40.65,
+      "report_length": 1315
+    },
+    {
+      "id": "arxiv-05",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-2303.08774-1776294550",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "GPT-4": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 44.39,
+      "report_length": 893
+    },
+    {
+      "id": "arxiv-06",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-2106.09685-1776294595",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "LoRA": true,
+              "adaptation": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 46.73,
+      "report_length": 1195
+    },
+    {
+      "id": "arxiv-07",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-2307.09288-1776294642",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "Llama": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 38.01,
+      "report_length": 985
+    },
+    {
+      "id": "arxiv-08",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-1512.03385-1776294680",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "残差": true,
+              "residual": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 39.32,
+      "report_length": 1243
+    },
+    {
+      "id": "pdf-01",
+      "type": "pdf",
+      "mode": "paper_read",
+      "task_id": "paper-pdf-1776294719",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "neural": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 8.91,
+      "report_length": 391
+    },
+    {
+      "id": "pdf-02",
+      "type": "pdf",
+      "mode": "paper_read",
+      "task_id": "paper-pdf-1776294728",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": true,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "reinforcement": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 16.91,
+      "report_length": 488
+    },
+    {
+      "id": "pdf-03",
+      "type": "pdf",
+      "mode": "paper_read",
+      "task_id": "paper-pdf-1776294745",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": true,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "NLP": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 16.75,
+      "report_length": 458
+    },
+    {
+      "id": "pdf-04",
+      "type": "pdf",
+      "mode": "paper_read",
+      "task_id": "paper-pdf-1776294761",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "graph": true,
+              "neural": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 7.94,
+      "report_length": 348
+    },
+    {
+      "id": "seq-01",
+      "type": "sequential",
+      "mode": "paper_read",
+      "task_id": "paper-pdf-1776294769",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "局限性",
+              "关键实验",
+              "核心贡献",
+              "方法概述",
+              "标题"
+            ],
+            "found": [
+              "无法生成报告",
+              "系统信息",
+              "引用可信度"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": true,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "Transformer": false,
+              "BERT": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 4
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 0.02,
+      "report_length": 295
+    },
+    {
+      "id": "seq-02",
+      "type": "sequential",
+      "mode": "paper_read",
+      "task_id": "paper-pdf-1776294769",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "局限性",
+              "关键实验",
+              "核心贡献",
+              "方法概述",
+              "标题"
+            ],
+            "found": [
+              "无法生成报告",
+              "系统信息",
+              "引用可信度"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": true,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "GPT": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 3
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 0.01,
+      "report_length": 295
+    },
+    {
+      "id": "seq-03",
+      "type": "sequential",
+      "mode": "paper_read",
+      "task_id": "paper-pdf-1776294769",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "局限性",
+              "关键实验",
+              "核心贡献",
+              "方法概述",
+              "标题"
+            ],
+            "found": [
+              "无法生成报告",
+              "系统信息",
+              "引用可信度"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": true,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "LoRA": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 3
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 0.01,
+      "report_length": 295
+    },
+    {
+      "id": "gold-01",
+      "type": "gold",
+      "mode": "paper_read",
+      "task_id": "paper-1706.03762-1776294769",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 38.58,
+      "report_length": 1151
+    },
+    {
+      "id": "gold-02",
+      "type": "gold",
+      "mode": "paper_read",
+      "task_id": "paper-1810.04805-1776294808",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 33.06,
+      "report_length": 927
+    },
+    {
+      "id": "gold-03",
+      "type": "gold",
+      "mode": "paper_read",
+      "task_id": "paper-2005.14165-1776294841",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "局限性",
+              "关键实验",
+              "引用可信度",
+              "核心贡献",
+              "方法概述",
+              "引用",
+              "标题",
+              "相关工作"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 1,
+            "required": 1
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 37.16,
+      "report_length": 1014
+    },
+    {
+      "id": "boundary-01",
+      "type": "boundary",
+      "mode": "paper_read",
+      "task_id": "paper-invalid_not_arxiv_id-1776294878",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "error_handled": {
+            "pass": true,
+            "indicators_found": [
+              "无法生成报告",
+              "失败"
+            ]
+          }
+        }
+      },
+      "duration": 0.03,
+      "report_length": 315
+    },
+    {
+      "id": "boundary-02",
+      "type": "boundary",
+      "mode": "paper_read",
+      "task_id": "paper-pdf-1776294878",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "error_handled": {
+            "pass": true,
+            "indicators_found": [
+              "无法生成报告",
+              "失败"
+            ]
+          }
+        }
+      },
+      "duration": 0.01,
+      "report_length": 295
+    },
+    {
+      "id": "research-01",
+      "type": "research",
+      "mode": "paper_read",
+      "task_id": "paper-Transformer architecture-1776294878",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "Abstract",
+              "Introduction"
+            ],
+            "found": [
+              "无法生成报告",
+              "系统信息",
+              "引用可信度"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 0,
+            "skipped": true
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "Transformer": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 0,
+            "required": 0
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 0.01,
+      "report_length": 319
+    }
+  ],
+  "config": {
+    "mode": "paper_read",
+    "use_api": false,
+    "layer": 1,
+    "cases_path": "eval/cases.jsonl",
+    "research_topic": null
+  },
+  "timestamp": "2026-04-16T07:14:38.764753"
+}

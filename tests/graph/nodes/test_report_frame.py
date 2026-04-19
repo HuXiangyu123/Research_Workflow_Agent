@@ -21,13 +21,14 @@ def test_report_frame_generates_draft_report():
     response = MagicMock()
     response.content = json.dumps({
         "sections": {
-            "论文信息": "paper info",
-            "I. 摘要与研究动机": "motivation",
-            "II. 背景与相关工作": "related work",
-            "III. 方法": "method",
-            "IV. 实验": "experiments",
-            "V. 讨论与未来方向": "discussion",
-            "VI. 总结和展望": "summary",
+            "title": "Attention Is All You Need Report",
+            "paper_information": "paper info",
+            "abstract_and_motivation": "motivation",
+            "background_and_related_work": "related work",
+            "methods": "method",
+            "experiments": "experiments",
+            "discussion_and_future_directions": "discussion",
+            "conclusion_and_outlook": "summary",
         },
         "claims": [{"id": "c1", "text": "claim", "citation_labels": ["[1]"]}],
         "citations": [{"label": "[1]", "url": "https://example.com", "reason": "source"}],
@@ -41,4 +42,5 @@ def test_report_frame_generates_draft_report():
 
     assert "report_frame" in result
     assert "draft_report" in result
-    assert result["draft_report"].sections["III. 方法"] == "method"
+    assert result["draft_report"].sections["methods"] == "method"
+    assert result["draft_report"].sections["title"] == "Attention Is All You Need Report"

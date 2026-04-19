@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.agent.llm import build_chat_llm
+from src.agent.llm import build_chat_llm, build_quick_llm, build_reason_llm
 from src.agent.settings import Settings
 
 
@@ -71,3 +71,45 @@ def test_build_chat_llm_ark_calls_chat_openai() -> None:
     assert kwargs["api_key"] == "ak"
     assert kwargs["base_url"] == "https://ark.cn-beijing.volces.com/api/v3"
     assert kwargs["temperature"] == 0
+
+
+def test_build_reason_llm_prefers_reason_model() -> None:
+    s = Settings(
+        llm_provider="openai",
+        deepseek_api_key="",
+        deepseek_base_url="https://api.deepseek.com",
+        deepseek_model="deepseek-chat",
+        openai_api_key="oa",
+        openai_base_url="",
+        openai_model="gpt-4o",
+        ark_api_key="",
+        ark_base_url="https://ark.cn-beijing.volces.com/api/v3",
+        ark_model="",
+        reason_model="gpt-5.4",
+        quick_model="gpt-5.1-codex-mini",
+    )
+    with patch("src.agent.llm.ChatOpenAI") as mock_cls:
+        build_reason_llm(s)
+    _, kwargs = mock_cls.call_args
+    assert kwargs["model"] == "gpt-5.4"
+
+
+def test_build_quick_llm_prefers_quick_model() -> None:
+    s = Settings(
+        llm_provider="openai",
+        deepseek_api_key="",
+        deepseek_base_url="https://api.deepseek.com",
+        deepseek_model="deepseek-chat",
+        openai_api_key="oa",
+        openai_base_url="",
+        openai_model="gpt-4o",
+        ark_api_key="",
+        ark_base_url="https://ark.cn-beijing.volces.com/api/v3",
+        ark_model="",
+        reason_model="gpt-5.4",
+        quick_model="gpt-5.1-codex-mini",
+    )
+    with patch("src.agent.llm.ChatOpenAI") as mock_cls:
+        build_quick_llm(s)
+    _, kwargs = mock_cls.call_args
+    assert kwargs["model"] == "gpt-5.1-codex-mini"

@@ -1,0 +1,175 @@
+{
+  "summary": {
+    "total": 4,
+    "passed": 0,
+    "failed": 3,
+    "errors": 1
+  },
+  "results": [
+    {
+      "id": "arxiv-01",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "direct-1706.03762-1776277002",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "方法概述",
+              "关键实验",
+              "局限性",
+              "核心贡献",
+              "标题"
+            ],
+            "found": [
+              "系统信息",
+              "引用可信度",
+              "无法生成报告"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": true,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "Transformer": false,
+              "attention": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 3
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 8.34,
+      "report_length": 251
+    },
+    {
+      "id": "arxiv-02",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "direct-1810.04805-1776277010",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "方法概述",
+              "关键实验",
+              "局限性",
+              "核心贡献",
+              "标题"
+            ],
+            "found": [
+              "系统信息",
+              "引用可信度",
+              "无法生成报告"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": true,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "BERT": false,
+              "pre-training": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 3
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 2.63,
+      "report_length": 251
+    },
+    {
+      "id": "arxiv-03",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "direct-2005.14165-1776277012",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "方法概述",
+              "关键实验",
+              "局限性",
+              "核心贡献",
+              "标题"
+            ],
+            "found": [
+              "系统信息",
+              "引用可信度",
+              "无法生成报告"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": true,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": false,
+            "keywords": {
+              "GPT-3": false,
+              "language model": false
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 3
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 3.48,
+      "report_length": 251
+    },
+    {
+      "id": "research-01",
+      "type": "research",
+      "mode": "research",
+      "error": "Task failed: ClarifyAgent produced no brief",
+      "duration": 0.16
+    }
+  ],
+  "config": {
+    "mode": "full",
+    "use_api": false,
+    "layer": 1,
+    "cases_path": "eval/cases.jsonl",
+    "research_topic": null
+  },
+  "timestamp": "2026-04-16T02:16:56.595067"
+}

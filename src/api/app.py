@@ -9,12 +9,17 @@ from src.agent.llm import build_deepseek_chat
 from src.agent.react_agent import build_react_agent
 from src.agent.report import generate_literature_report
 from src.agent.settings import Settings
+from src.api.routes.agents import router as agents_router
+from src.api.routes.config import router as config_router
+from src.api.routes.mcp import router as mcp_router
+from src.api.routes.skills import router as skills_router
 from src.api.routes.tasks import router as tasks_router
 from src.api.routes.corpus_evidence import router as corpus_evidence_router
 from src.api.routes.evals import router as evals_router
+from src.api.routes.workspaces import router as workspaces_router
 from src.tools.pdf import extract_text_from_pdf_bytes
 
-load_dotenv()
+load_dotenv(".env")
 
 PDF_SUFFIX = ".pdf"
 
@@ -30,6 +35,11 @@ app.add_middleware(
 app.include_router(tasks_router)
 app.include_router(corpus_evidence_router)
 app.include_router(evals_router)
+app.include_router(agents_router)
+app.include_router(config_router)
+app.include_router(skills_router)
+app.include_router(mcp_router)
+app.include_router(workspaces_router)
 
 
 def _build_react_agent():

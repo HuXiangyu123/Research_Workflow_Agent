@@ -199,17 +199,32 @@ def to_limited_brief(raw_query: str) -> ResearchBrief:
     The fallback preserves high-signal hints from the raw query when possible
     (for example desired output, time range, domain keywords) so transient LLM
     failures do not erase user intent.
+
+    Even with limited info, we aim to NOT set needs_followup=True unless truly necessary.
+    A clear topic should result in a productive brief that can generate a report.
     """
     query = raw_query.strip()
     topic = _extract_topic(query) or "未提供研究主题"
-    desired_output = _infer_desired_output(query) or "research_brief"
+
+    # Try to infer desired output from query patterns
+    inferred_output = _infer_desired_output(query)
+    desired_output = inferred_output or "survey"
+
     time_range = _infer_time_range(query)
     domain_scope = _infer_domain_scope(query)
     focus_dimensions = _infer_focus_dimensions(query)
     topic_specific = _is_topic_specific(query)
+
+    # Only add ambiguities if truly critical info is missing
+    # A clear topic is enough to proceed - don't block the pipeline
     ambiguities: list[AmbiguityItem] = []
 
-    if not topic_specific:
+    # Only set needs_followup if topic is genuinely unclear
+    # For short but specific topics (like "Transformer architecture"),
+    # we should NOT require followup - just proceed with what we have
+    needs_followup = False  # Default to False to allow report generation
+    if not topic_specific or topic == "未提供研究主题":
+        needs_followup = True
         ambiguities.append(
             AmbiguityItem(
                 field="topic",
@@ -217,27 +232,29 @@ def to_limited_brief(raw_query: str) -> ResearchBrief:
                 suggested_options=["多模态学习", "RAG", "Agent", "报告生成"],
             )
         )
-
-    if _infer_desired_output(query) is None:
-        ambiguities.append(
-            AmbiguityItem(
-                field="desired_output",
-                reason="原始查询没有明确说明期望的输出形式",
-                suggested_options=[
-                    "survey_outline",
-                    "paper_cards",
-                    "reading_notes",
-                    "related_work_draft",
-                ],
+        # Also ask for desired output if topic is unclear
+        if inferred_output is None:
+            ambiguities.append(
+                AmbiguityItem(
+                    field="desired_output",
+                    reason="原始查询没有明确说明期望的输出形式",
+                    suggested_options=[
+                        "survey_outline",
+                        "paper_cards",
+                        "reading_notes",
+                        "related_work_draft",
+                    ],
+                )
             )
-        )
 
-    needs_followup = bool(ambiguities)
-    confidence = 0.25
-    if topic_specific and desired_output != "research_brief":
-        confidence = 0.62 if not needs_followup else 0.45
-    elif topic_specific:
-        confidence = 0.42
+    # Confidence based on how much info we extracted
+    if topic_specific and topic != "未提供研究主题":
+        # We have a clear topic - moderate confidence
+        confidence = 0.65
+        if focus_dimensions:
+            confidence = 0.75
+    else:
+        confidence = 0.35
 
     return ResearchBrief(
         topic=topic,

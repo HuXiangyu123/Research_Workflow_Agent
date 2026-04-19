@@ -116,7 +116,7 @@ def test_rerank_and_filter_candidates_applies_time_range_and_strict_core_scope()
     assert any(entry.get("strict_core") is True for entry in rerank_log if entry.get("strategy") == "domain_aware_anchor_rerank")
 
 
-def test_rerank_and_filter_candidates_keeps_contextual_overviews_but_drops_component_only_papers_under_strict_scope():
+def test_rerank_and_filter_candidates_prefers_near_core_support_over_overviews_under_strict_scope():
     brief = {
         "topic": "AI agents for medical imaging diagnosis and triage",
         "sub_questions": ["How do multimodal agents support diagnosis and triage?"],
@@ -155,9 +155,9 @@ def test_rerank_and_filter_candidates_keeps_contextual_overviews_but_drops_compo
 
     kept_titles = {item["title"] for item in kept}
     assert "RadioRAG: Online Retrieval-augmented Generation for Radiology Question Answering" in kept_titles
-    assert "LLM-Assisted Emergency Triage Benchmark: Bridging Hospital-Rich and MCI-Like Field Simulation" in kept_titles
-    assert "Introduction of Medical Imaging Modalities" in kept_titles
-    assert "Medical Knowledge-Guided Deep Curriculum Learning for Elbow Fracture Diagnosis from X-Ray Images" in kept_titles
+    assert "LLM-Assisted Emergency Triage Benchmark: Bridging Hospital-Rich and MCI-Like Field Simulation" not in kept_titles
+    assert "Introduction of Medical Imaging Modalities" not in kept_titles
+    assert "Medical Knowledge-Guided Deep Curriculum Learning for Elbow Fracture Diagnosis from X-Ray Images" not in kept_titles
 
 
 def test_token_occurs_uses_word_boundaries_for_short_ascii_tokens():
@@ -202,7 +202,7 @@ def test_rerank_and_filter_candidates_strict_scope_drops_out_of_range_even_if_ra
     assert "Multi Agent Communication System for Online Auction with Decision Support System" not in kept_titles
 
 
-def test_supplement_strict_core_survey_candidates_recovers_adjacent_in_scope_papers():
+def test_supplement_strict_core_survey_candidates_caps_adjacent_support_when_core_is_thin():
     kept = [
         {
             "title": "CT-Agent",
@@ -282,7 +282,66 @@ def test_supplement_strict_core_survey_candidates_recovers_adjacent_in_scope_pap
 
     kept_titles = {item["title"] for item in new_kept}
     dropped_titles = {item["title"] for item in new_dropped}
-    assert "Clinical Report Generation with Frozen LLMs" in kept_titles
-    assert "Introduction of Medical Imaging Modalities" in kept_titles
+    assert "RadioRAG" in kept_titles
+    assert "Clinical Report Generation with Frozen LLMs" in dropped_titles
+    assert "Introduction of Medical Imaging Modalities" in dropped_titles
     assert "Medical Image Segmentation Baseline" in dropped_titles
     assert "Regulatory Agentic AI Survey" in dropped_titles
+
+
+def test_rerank_and_filter_candidates_recovers_report_workflow_support_but_blocks_commerce_triage():
+    brief = {
+        "topic": "Recent agentic systems for medical imaging diagnosis and clinical triage",
+        "sub_questions": ["methods", "benchmarks", "limitations"],
+        "time_range": "2023 to 2026",
+    }
+    search_plan = {"plan_goal": "medical imaging diagnosis and clinical triage agent survey"}
+
+    candidates = [
+        {
+            "title": "Medical AI Consensus: A Multi-Agent Framework for Radiology Report Generation and Evaluation",
+            "abstract": "multi-agent radiology report generation workflow with evaluation benchmarks",
+            "published_year": 2025,
+            "fulltext_available": True,
+        },
+        {
+            "title": "VoxelPrompt: A Vision Agent for End-to-End Medical Image Analysis",
+            "abstract": "vision agent for medical image analysis and longitudinal imaging workflows",
+            "published_year": 2024,
+            "fulltext_available": True,
+        },
+        {
+            "title": "RadioRAG: Online Retrieval-augmented Generation for Radiology Question Answering",
+            "abstract": "radiology retrieval workflow for diagnosis support and question answering",
+            "published_year": 2024,
+            "fulltext_available": True,
+        },
+        {
+            "title": "Unifying Relational Sentence Generation and Retrieval for Medical Image Report Composition",
+            "abstract": "medical image report composition and retrieval for radiology reporting workflows",
+            "published_year": 2024,
+            "fulltext_available": False,
+        },
+        {
+            "title": "LLM-Assisted Emergency Triage Benchmark: Bridging Hospital-Rich and MCI-Like Field Simulation",
+            "abstract": "llm-assisted clinical triage benchmark for hospital workflow evaluation",
+            "published_year": 2025,
+            "fulltext_available": False,
+        },
+        {
+            "title": "Agentic Observability: Automated Alert Triage for Adobe E-Commerce",
+            "abstract": "agentic alert triage workflow for adobe e-commerce operations",
+            "published_year": 2025,
+            "fulltext_available": False,
+        },
+    ]
+
+    kept, _ = _rerank_and_filter_candidates(candidates, brief=brief, search_plan=search_plan)
+
+    kept_titles = {item["title"] for item in kept}
+    assert {
+        "RadioRAG: Online Retrieval-augmented Generation for Radiology Question Answering",
+        "Unifying Relational Sentence Generation and Retrieval for Medical Image Report Composition",
+    }.intersection(kept_titles)
+    assert "LLM-Assisted Emergency Triage Benchmark: Bridging Hospital-Rich and MCI-Like Field Simulation" not in kept_titles
+    assert "Agentic Observability: Automated Alert Triage for Adobe E-Commerce" not in kept_titles

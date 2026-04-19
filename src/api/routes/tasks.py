@@ -31,6 +31,7 @@ _STREAMABLE_TASK_FILES = {
     "comparison_matrix.json",
     "writing_scaffold.json",
     "writing_outline.json",
+    "section_evidence_map.json",
     "mcp_prompt_payload.json",
     "draft_skill_trace.json",
     "review_skill_trace.json",

@@ -317,6 +317,8 @@ def write_node_output(
                 write_named_json(task_id, "writing_scaffold.json", node_result.get("writing_scaffold"), workspace_id=workspace_id)
             if node_result.get("writing_outline"):
                 write_named_json(task_id, "writing_outline.json", node_result.get("writing_outline"), workspace_id=workspace_id)
+            if node_result.get("section_evidence_map"):
+                write_named_json(task_id, "section_evidence_map.json", node_result.get("section_evidence_map"), workspace_id=workspace_id)
             if node_result.get("mcp_prompt_payload"):
                 write_named_json(task_id, "mcp_prompt_payload.json", node_result.get("mcp_prompt_payload"), workspace_id=workspace_id)
             if node_result.get("skill_trace"):
@@ -523,6 +525,7 @@ def _list_task_artifacts(workspace_id: str, task_dir: Path) -> list[WorkspaceArt
         "comparison_matrix.json",
         "writing_scaffold.json",
         "writing_outline.json",
+        "section_evidence_map.json",
         "mcp_prompt_payload.json",
         "claim_verification.json",
         "draft_skill_trace.json",
@@ -612,6 +615,12 @@ def _artifact_from_task_file(workspace_id: str, task_id: str, path: Path) -> Wor
         created_by_node = "draft"
         count = len(payload) if isinstance(payload, list) else 0
         summary = f"{count} outline entries" if count else None
+    elif name == "section_evidence_map.json":
+        payload = _read_json_if_exists(path) or {}
+        artifact_type = ArtifactType.REPORT_OUTLINE
+        title = f"Section evidence map for task {task_id}"
+        created_by_node = "draft"
+        summary = f"{len(payload)} section mappings" if isinstance(payload, dict) else None
     elif name == "mcp_prompt_payload.json":
         payload = _read_json_if_exists(path) or {}
         artifact_type = ArtifactType.TOOL_TRACE

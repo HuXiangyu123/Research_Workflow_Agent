@@ -1,0 +1,10 @@
+{
+  "paper_candidates": [
+    {
+      "rank": 1,
+      "title": "Candidate paper",
+      "url": "https://arxiv.org/abs/1234.5678",
+      "abstract": "Short abstract snippet"
+    }
+  ]
+}

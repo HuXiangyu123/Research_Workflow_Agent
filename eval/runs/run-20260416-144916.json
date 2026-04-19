@@ -1,0 +1,76 @@
+{
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0
+  },
+  "results": [
+    {
+      "id": "research-01",
+      "type": "research",
+      "mode": "research",
+      "task_id": "b0a37792-e3ea-4551-8b71-dc166bc70fbd",
+      "layer1": {
+        "pass": true,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "核心贡献",
+              "方法概述",
+              "Background",
+              "Datasets",
+              "标题",
+              "Future Work",
+              "局限性",
+              "相关研究背景",
+              "关键实验",
+              "Abstract",
+              "Discussion",
+              "References",
+              "Evaluation",
+              "Conclusion",
+              "Methods",
+              "Introduction",
+              "Taxonomy"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 0,
+            "skipped": true
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "Transformer": true
+            }
+          },
+          "min_citations": {
+            "pass": true,
+            "found": 12,
+            "required": 0
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 430.87,
+      "report_length": 17643
+    }
+  ],
+  "config": {
+    "mode": "full",
+    "use_api": false,
+    "layer": 1,
+    "cases_path": "eval/cases.jsonl",
+    "research_topic": null
+  },
+  "timestamp": "2026-04-16T14:49:16.098698"
+}

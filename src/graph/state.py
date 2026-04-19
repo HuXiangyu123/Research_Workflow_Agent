@@ -22,12 +22,25 @@ class NodeStatus(BaseModel):
 
 
 class AgentState(TypedDict):
+    task_id: str
+    workspace_id: str
     raw_input: str
     source_type: Literal["arxiv", "pdf", "research"]
     report_mode: Literal["draft", "full"]
+    research_depth: Literal["plan", "full"]
+    interaction_mode: Literal["interactive", "non_interactive"]
     paper_type: Literal["regular", "survey"] | None
     brief: dict[str, Any] | None
     search_plan: dict[str, Any] | None
+    search_plan_warnings: list[str]
+    rag_result: dict[str, Any] | None
+    paper_cards: list[dict[str, Any]]
+    compression_result: dict[str, Any] | None
+    taxonomy: dict[str, Any] | None
+    review_feedback: dict[str, Any] | None
+    review_passed: bool | None
+    artifacts_created: list[dict[str, Any]]
+    artifact_count: int
     current_stage: str | None
     arxiv_id: str | None
     pdf_text: str | None
@@ -42,6 +55,8 @@ class AgentState(TypedDict):
     draft_markdown: str | None
     full_markdown: str | None
     followup_hints: list[str]
+    awaiting_followup: bool
+    followup_resolution: dict[str, Any] | None
     tokens_used: Annotated[int, operator.add]
     warnings: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]

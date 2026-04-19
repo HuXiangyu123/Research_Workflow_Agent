@@ -1,8 +1,20 @@
 # Entropy Management — Agent 系统熵管理
 
 > 生成时间：2026-04-14
-> 状态：**设计文档**（待实现）
+> 状态：**Phase 1 已实现**（见下文）
 > 优先级：P1（Harness Engineering 缺失的最后一块核心拼图）
+
+---
+
+## 实现状态
+
+| 阶段 | 内容 | 状态 | 文件 |
+|------|------|------|------|
+| Phase 1 | `EntropyReport` + `DriftReport` 数据模型 | **✅ 完成** | `src/entropy/scanner.py` |
+| Phase 2 | `ConstraintViolationDetector`（检测 SQLite 引入） | **✅ 完成** | `src/entropy/detectors/constraint.py` |
+| Phase 3 | `DeadCodeDetector`（检测幽灵节点引用） | **✅ 完成** | `src/entropy/detectors/constraint.py` |
+| Phase 4 | `DocDriftDetector`（检测文档漂移） | **✅ 完成** | `src/entropy/detectors/constraint.py` |
+| Phase 5 | Entropy CLI（`scan` + `check` 命令） | **✅ 完成** | `src/entropy/cli.py` |
 
 ---
 

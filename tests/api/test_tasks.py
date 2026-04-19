@@ -35,6 +35,28 @@ def test_create_task():
     assert data["status"] == "pending"
 
 
+def test_create_task_reuses_requested_workspace_id():
+    with patch("src.api.routes.tasks._run_graph"):
+        resp1 = client.post(
+            "/tasks",
+            json={"input_value": "1706.03762", "report_mode": "draft", "workspace_id": "ws_shared_api"},
+        )
+        resp2 = client.post(
+            "/tasks",
+            json={
+                "input_type": "research",
+                "input_value": "RAG survey",
+                "source_type": "research",
+                "workspace_id": "ws_shared_api",
+            },
+        )
+
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+    assert resp1.json()["workspace_id"] == "ws_shared_api"
+    assert resp2.json()["workspace_id"] == "ws_shared_api"
+
+
 def test_get_task():
     with patch("src.api.routes.tasks._run_graph"):
         resp = client.post("/tasks", json={"input_value": "1706.03762", "report_mode": "draft"})

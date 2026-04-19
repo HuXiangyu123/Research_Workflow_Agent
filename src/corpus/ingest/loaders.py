@@ -122,7 +122,7 @@ class ArxivLoader(BaseLoader):
             extracted_text=extracted_text,
             page_texts=page_texts,
             raw_metadata=metadata,
-            parse_quality_score=parser.estimate_quality(extracted_text, metadata),
+            parse_quality_score=pdf_parser.estimate_quality(extracted_text, metadata),
             warnings=warnings,
         )
 

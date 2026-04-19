@@ -46,6 +46,30 @@ from src.memory.manager import get_memory_manager
 logger = logging.getLogger(__name__)
 
 
+def _grounding_metrics(claim_verification: dict[str, Any] | None) -> dict[str, float]:
+    stats = (claim_verification or {}).get("grounding_stats", {}) if isinstance(claim_verification, dict) else {}
+    total = float(stats.get("total", 0.0) or 0.0)
+    grounded = float(stats.get("grounded", 0.0) or 0.0)
+    partial = float(stats.get("partial", 0.0) or 0.0)
+    ungrounded = float(stats.get("ungrounded", 0.0) or 0.0)
+    abstained = float(stats.get("abstained", 0.0) or 0.0)
+    grounded_ratio = float(stats.get("grounded_ratio", grounded / total if total else 0.0) or 0.0)
+    supported_ratio = float(
+        stats.get("supported_ratio", (grounded + partial) / total if total else 0.0) or 0.0
+    )
+    partial_ratio = partial / total if total else 0.0
+    ungrounded_ratio = ungrounded / total if total else 0.0
+    abstained_ratio = abstained / total if total else 0.0
+    return {
+        "total": total,
+        "grounded_ratio": grounded_ratio,
+        "supported_ratio": supported_ratio,
+        "partial_ratio": partial_ratio,
+        "ungrounded_ratio": ungrounded_ratio,
+        "abstained_ratio": abstained_ratio,
+    }
+
+
 # ─── Self-Reflection 定义 ──────────────────────────────────────────────────
 
 
@@ -250,12 +274,29 @@ class ReviewerAgent:
             )
             feedback = self._serialize_feedback(review_result.get("review_feedback"))
             claim_verification = review_result.get("claim_verification", {})
-            grounding_stats = claim_verification.get("grounding_stats", {})
-            supported_ratio = float(grounding_stats.get("supported_ratio", 0.0) or 0.0)
+            grounding_metrics = _grounding_metrics(claim_verification)
             issue_count = len(feedback.get("issues", [])) if isinstance(feedback, dict) else 0
-            confidence = max(0.1, min(0.95, 0.35 + supported_ratio * 0.5 - issue_count * 0.05))
-            if isinstance(feedback, dict) and feedback.get("passed") is True:
-                confidence = max(confidence, 0.85)
+            if grounding_metrics["total"] == 0:
+                confidence = 0.75 if isinstance(feedback, dict) and feedback.get("passed") is True else 0.45
+                confidence = max(0.05, min(0.9, confidence - issue_count * 0.05))
+            else:
+                confidence = (
+                    0.2
+                    + grounding_metrics["grounded_ratio"] * 0.55
+                    + grounding_metrics["supported_ratio"] * 0.15
+                    - grounding_metrics["partial_ratio"] * 0.15
+                    - grounding_metrics["ungrounded_ratio"] * 0.2
+                    - grounding_metrics["abstained_ratio"] * 0.1
+                    - issue_count * 0.05
+                )
+                confidence = max(0.05, min(0.95, confidence))
+            if (
+                isinstance(feedback, dict)
+                and feedback.get("passed") is True
+                and grounding_metrics["grounded_ratio"] >= 0.8
+                and grounding_metrics["ungrounded_ratio"] == 0.0
+            ):
+                confidence = max(confidence, 0.8)
             return {
                 "feedback": feedback,
                 "confidence": confidence,
@@ -263,6 +304,7 @@ class ReviewerAgent:
                 "draft_markdown": review_result.get("draft_markdown"),
                 "final_report": self._serialize_feedback(review_result.get("final_report")),
                 "claim_verification": claim_verification,
+                "grounding_metrics": grounding_metrics,
                 "skill_trace": list(review_result.get("skill_trace", [])),
             }
         except Exception as exc:
@@ -299,6 +341,30 @@ class ReviewerAgent:
                 issues = [str(i) for i in (feedback.issues or [])]
             if hasattr(feedback, "summary"):
                 reason = feedback.summary
+
+        grounding_metrics = actor_result.get("grounding_metrics") or _grounding_metrics(
+            actor_result.get("claim_verification")
+        )
+        total_claims = grounding_metrics["total"]
+        if total_claims > 0:
+            if grounding_metrics["grounded_ratio"] < 0.65:
+                passed = False
+                reason = (
+                    f"Grounded ratio {grounding_metrics['grounded_ratio']:.2f} below minimum 0.65"
+                )
+                task_type = "review_grounding"
+            elif grounding_metrics["ungrounded_ratio"] > 0.0:
+                passed = False
+                reason = (
+                    f"Ungrounded ratio {grounding_metrics['ungrounded_ratio']:.2f} must be 0.00 for pass"
+                )
+                task_type = "review_grounding"
+            elif grounding_metrics["partial_ratio"] > 0.35:
+                passed = False
+                reason = (
+                    f"Partial ratio {grounding_metrics['partial_ratio']:.2f} exceeds maximum 0.35"
+                )
+                task_type = "review_grounding"
 
         if confidence < self.REFLECTION_THRESHOLD:
             passed = False

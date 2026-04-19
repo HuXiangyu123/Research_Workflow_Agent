@@ -204,6 +204,7 @@ class SkillMetadataParser:
     def load_skill_content(cls, skill_dir: Path | str) -> str:
         """按需加载完整 SKILL.md 内容（懒加载）。"""
         skill_dir = Path(skill_dir)
+        skill_md = skill_dir / SkillPaths.SKILL_FILE
         if skill_md.exists():
             return skill_md.read_text(encoding="utf-8")
         return ""

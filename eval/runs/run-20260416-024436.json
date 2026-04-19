@@ -1,0 +1,215 @@
+{
+  "summary": {
+    "total": 4,
+    "passed": 0,
+    "failed": 4,
+    "errors": 0
+  },
+  "results": [
+    {
+      "id": "arxiv-01",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-1706.03762-1776278239",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "引用",
+              "相关工作",
+              "关键实验",
+              "局限性",
+              "引用可信度",
+              "核心贡献",
+              "标题",
+              "方法概述"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "Transformer": true,
+              "attention": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 1,
+            "required": 3
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 52.91,
+      "report_length": 1069
+    },
+    {
+      "id": "arxiv-02",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-1810.04805-1776278292",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "引用",
+              "相关工作",
+              "关键实验",
+              "局限性",
+              "引用可信度",
+              "核心贡献",
+              "标题",
+              "方法概述"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "BERT": true,
+              "pre-training": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 1,
+            "required": 3
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 48.61,
+      "report_length": 1279
+    },
+    {
+      "id": "arxiv-03",
+      "type": "arxiv",
+      "mode": "paper_read",
+      "task_id": "paper-2005.14165-1776278340",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": true,
+            "missing": [],
+            "found": [
+              "引用",
+              "相关工作",
+              "关键实验",
+              "局限性",
+              "引用可信度",
+              "核心贡献",
+              "标题",
+              "方法概述"
+            ]
+          },
+          "citation_format": {
+            "pass": true,
+            "has_section": true,
+            "citation_count": 1
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {
+              "GPT-3": true,
+              "language model": true
+            }
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 1,
+            "required": 3
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 46.07,
+      "report_length": 1108
+    },
+    {
+      "id": "research-01",
+      "type": "research",
+      "mode": "research",
+      "task_id": "9450825a-c301-4534-a2ff-4e5837fe7ea3",
+      "layer1": {
+        "pass": false,
+        "checks": {
+          "structure": {
+            "pass": false,
+            "missing": [
+              "关键实验",
+              "局限性",
+              "核心贡献",
+              "标题",
+              "方法概述"
+            ],
+            "found": [
+              "Abstract",
+              "Introduction",
+              "Conclusion",
+              "Challenges",
+              "Methods Review",
+              "Datasets And Benchmarks"
+            ]
+          },
+          "citation_format": {
+            "pass": false,
+            "has_section": false,
+            "citation_count": 0
+          },
+          "must_include": {
+            "pass": true,
+            "keywords": {}
+          },
+          "min_citations": {
+            "pass": false,
+            "found": 0,
+            "required": 5
+          },
+          "cost_guard": {
+            "pass": true,
+            "tokens_used": 0,
+            "max": 50000
+          }
+        }
+      },
+      "duration": 289.91,
+      "report_length": 8191
+    }
+  ],
+  "config": {
+    "mode": "full",
+    "use_api": false,
+    "layer": 1,
+    "cases_path": "eval/cases.jsonl",
+    "research_topic": null
+  },
+  "timestamp": "2026-04-16T02:44:36.971674"
+}

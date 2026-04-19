@@ -1,0 +1,12 @@
+{
+  "experiments": [
+    {
+      "paper": "Paper title",
+      "datasets": ["Dataset"],
+      "metrics": ["AUC"],
+      "baselines": ["Baseline A"],
+      "reproducibility_score": 0.6,
+      "missing_info": ["No validation split details"]
+    }
+  ]
+}

@@ -93,6 +93,7 @@ def _build_agent_state(
         "task_id": task_id or "",
         "source_type": getattr(task, "source_type", "research") if task else "research",
         "report_mode": getattr(task, "report_mode", "draft") if task else "draft",
+        "interaction_mode": "interactive",
     }
 
     if task:
@@ -170,11 +171,31 @@ async def run_agent(req: AgentRunRequest) -> AgentRunResponse:
 
     try:
         if resolved_role == AgentRole.SUPERVISOR and not req.node_name:
-            result = await supervisor.collaborate(
-                state=state,
-                start_node=req.inputs.get("start_node") if isinstance(req.inputs, dict) else None,
-                inputs=req.inputs,
-            )
+            from src.models.config import SupervisorMode
+
+            requested_mode = req.inputs.get("supervisor_mode") if isinstance(req.inputs, dict) else None
+            configured_mode = getattr(getattr(supervisor, "config", None), "supervisor_mode", None)
+            if requested_mode == SupervisorMode.LLM_HANDOFF.value or configured_mode == SupervisorMode.LLM_HANDOFF:
+                result = await supervisor.collaborate_with_handoff(
+                    state=state,
+                    start_node=req.inputs.get("start_node") if isinstance(req.inputs, dict) else None,
+                    stop_after=req.inputs.get("stop_after") if isinstance(req.inputs, dict) else None,
+                    inputs=req.inputs,
+                    user_request=(
+                        req.inputs.get("user_request")
+                        or req.inputs.get("message")
+                        or req.inputs.get("query")
+                    )
+                    if isinstance(req.inputs, dict)
+                    else None,
+                )
+            else:
+                result = await supervisor.collaborate(
+                    state=state,
+                    start_node=req.inputs.get("start_node") if isinstance(req.inputs, dict) else None,
+                    stop_after=req.inputs.get("stop_after") if isinstance(req.inputs, dict) else None,
+                    inputs=req.inputs,
+                )
         else:
             result = await supervisor.run_node(node_name or "search_plan", state, req.inputs)
 

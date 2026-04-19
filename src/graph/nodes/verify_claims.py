@@ -13,11 +13,11 @@ def verify_claims(state: dict) -> dict:
 
     llm = None
     try:
-        from src.agent.llm import build_deepseek_chat
+        from src.agent.llm import build_reason_llm
         from src.agent.settings import Settings
 
         settings = Settings.from_env()
-        llm = build_deepseek_chat(settings)
+        llm = build_reason_llm(settings)
     except Exception:
         pass
 

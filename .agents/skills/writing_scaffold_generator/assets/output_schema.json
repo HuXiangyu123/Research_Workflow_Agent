@@ -1,0 +1,14 @@
+{
+  "scaffold": {
+    "title": "Survey title",
+    "introduction": ["Define scope", "Preview the organizing logic"],
+    "methods": ["Compare representative methods and trade-offs"]
+  },
+  "outline": [
+    "1. Introduction",
+    "2. Methods"
+  ],
+  "section_evidence_map": {
+    "methods": ["Paper A", "Paper B"]
+  }
+}

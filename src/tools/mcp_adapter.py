@@ -10,7 +10,9 @@ import asyncio
 import json
 import logging
 import subprocess
+import sys
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from src.models.mcp import (
@@ -349,4 +351,22 @@ def get_mcp_adapter() -> MCPAdapter:
     global _mcp_adapter
     if _mcp_adapter is None:
         _mcp_adapter = MCPAdapter()
+        server_script = (
+            Path(__file__).resolve().parent.parent
+            / "mcp_servers"
+            / "academic_writing_server.py"
+        )
+        if server_script.is_file():
+            _mcp_adapter.register(
+                MCPServerConfig(
+                    server_id="academic_writing",
+                    name="Academic Writing Support",
+                    transport=MCPServerTransport.STDIO,
+                    command=sys.executable,
+                    args=[str(server_script)],
+                    env={},
+                    enabled=True,
+                    workspace_scoped=False,
+                )
+            )
     return _mcp_adapter

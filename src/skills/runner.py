@@ -178,6 +178,7 @@ class SkillsRunner:
             output_artifact_ids=[],
             trace_refs=[],
             summary=result.get("summary") or result.get("stdout") or f"Skill {req.skill_id} executed",
+            result=result,
         )
 
     async def _execute(

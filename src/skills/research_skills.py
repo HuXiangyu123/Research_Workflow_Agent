@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -80,8 +81,8 @@ def lit_review_scanner(inputs: dict[str, Any], context: dict) -> dict:
             })
 
         summary = (
-            f"扫描完成：{len(queries)} 个查询，"
-            f"去重后 {len(candidates)} 篇候选论文"
+            f"Scanned {len(queries)} queries and kept {len(candidates)} "
+            f"deduplicated candidate papers."
         )
         return {
             "summary": summary,
@@ -132,90 +133,74 @@ def claim_verification(inputs: dict[str, Any], context: dict) -> dict:
     }
 
     try:
-        from src.agent.llm import build_reason_llm
-        from src.agent.settings import get_settings
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        settings = get_settings()
-        llm = build_reason_llm(settings, max_tokens=8192)
-
-        verified_claims = []
+        verified_claims: list[dict[str, Any]] = []
         grounded_count = 0
         partial_count = 0
         ungrounded_count = 0
-
-        VERIFY_SYSTEM = """You are a claim verification expert. Given a claim and its cited evidence, judge whether the claim is:
-- "grounded": the citation fully supports the claim
-- "partial": the citation partially supports the claim
-- "ungrounded": the citation does not support the claim
-- "abstained": cannot judge due to insufficient evidence
-
-Output strictly JSON: {"status": "...", "reason": "...", "confidence": 0.0-1.0}"""
+        abstained_count = 0
 
         for claim in claims:
-            claim_id = claim.get("id", "")
-            claim_text = claim.get("text", "")
-            citation_labels = claim.get("citation_labels", [])
+            claim_id = str(claim.get("id", "") or "")
+            claim_text = str(claim.get("text", "") or "")
+            citation_labels = _clean_list(claim.get("citation_labels", []))
+            supports = claim.get("supports", []) if isinstance(claim, dict) else []
+            overall_status = str(claim.get("overall_status", "") or "").strip().lower()
 
-            # Gather cited evidence
-            evidence_parts = []
-            for label in citation_labels:
-                cit = cit_map.get(label)
-                if cit:
-                    content = cit.get("fetched_content") or cit.get("reason", "")
-                    if content:
-                        evidence_parts.append(f"[{label}] {content[:500]}")
+            if overall_status not in {"grounded", "partial", "ungrounded", "abstained"}:
+                support_statuses = {
+                    str(item.get("support_status", "") or "").strip().lower()
+                    for item in supports
+                    if isinstance(item, dict)
+                }
+                has_reachable_citation = any(
+                    (cit_map.get(label, {}) or {}).get("fetched_content")
+                    or (cit_map.get(label, {}) or {}).get("reachable") is True
+                    for label in citation_labels
+                )
+                if "supported" in support_statuses:
+                    overall_status = "grounded"
+                elif "partial" in support_statuses:
+                    overall_status = "partial"
+                elif has_reachable_citation and citation_labels:
+                    overall_status = "partial"
+                elif citation_labels:
+                    overall_status = "ungrounded"
+                else:
+                    overall_status = "abstained"
 
-            if not evidence_parts:
-                verified_claims.append({
-                    "claim_id": claim_id,
-                    "text": claim_text,
-                    "status": "abstained",
-                    "reason": "No reachable citation content",
-                    "confidence": 0.0,
-                })
-                continue
-
-            evidence_text = "\n".join(evidence_parts)
-            user_prompt = f"""Claim: {claim_text}
-
-Evidence:\n{evidence_text}
-
-Judge the claim against the evidence. Output JSON:"""
-            try:
-                resp = llm.invoke([
-                    SystemMessage(content=VERIFY_SYSTEM),
-                    HumanMessage(content=user_prompt),
-                ])
-                raw = resp.content if hasattr(resp, "content") else str(resp)
-                data = _extract_json(raw)
-                status = data.get("status", "ungrounded")
-            except Exception:
-                status = "ungrounded"
-
-            if status == "grounded":
+            if overall_status == "grounded":
                 grounded_count += 1
-            elif status == "partial":
+            elif overall_status == "partial":
                 partial_count += 1
+            elif overall_status == "abstained":
+                abstained_count += 1
             else:
                 ungrounded_count += 1
 
-            verified_claims.append({
-                "claim_id": claim_id,
-                "text": claim_text,
-                "status": status,
-                "reason": data.get("reason", ""),
-                "confidence": data.get("confidence", 0.0),
-                "cited_labels": citation_labels,
-            })
+            reason = {
+                "grounded": "Existing grounding evidence supports the claim.",
+                "partial": "The claim has incomplete but non-zero evidence support.",
+                "ungrounded": "The cited evidence does not sufficiently support the claim.",
+                "abstained": "No usable citation evidence was available for verification.",
+            }[overall_status]
+            verified_claims.append(
+                {
+                    "claim_id": claim_id,
+                    "text": claim_text,
+                    "status": overall_status,
+                    "reason": reason,
+                    "confidence": 0.9 if overall_status == "grounded" else 0.7 if overall_status == "partial" else 0.2,
+                    "cited_labels": citation_labels,
+                }
+            )
 
         total = len(verified_claims)
-        grounded_ratio = grounded_count / total if total else 0.0
+        supported_total = grounded_count + partial_count
         return {
             "summary": (
-                f"验证了 {total} 条 claims："
-                f"{grounded_count} grounded, {partial_count} partial, "
-                f"{ungrounded_count} ungrounded"
+                f"Verified {total} claims: {grounded_count} grounded, "
+                f"{partial_count} partial, {ungrounded_count} ungrounded, "
+                f"{abstained_count} abstained."
             ),
             "verified_claims": verified_claims,
             "grounding_stats": {
@@ -223,7 +208,9 @@ Judge the claim against the evidence. Output JSON:"""
                 "grounded": grounded_count,
                 "partial": partial_count,
                 "ungrounded": ungrounded_count,
-                "grounded_ratio": round(grounded_ratio, 3),
+                "abstained": abstained_count,
+                "grounded_ratio": round((grounded_count / total), 3) if total else 0.0,
+                "supported_ratio": round((supported_total / total), 3) if total else 0.0,
             },
         }
 
@@ -259,65 +246,62 @@ def comparison_matrix_builder(inputs: dict[str, Any], context: dict) -> dict:
         return {"error": "comparison_matrix_builder: paper_cards is required"}
 
     try:
-        from src.agent.llm import build_reason_llm
-        from src.agent.settings import get_settings
-        from langchain_core.messages import HumanMessage, SystemMessage
+        rows: list[dict[str, Any]] = []
+        missing: list[str] = []
 
-        settings = get_settings()
-        llm = build_reason_llm(settings, max_tokens=16384)
-
-        # Prepare paper summaries for LLM
-        papers_text = []
         for i, card in enumerate(paper_cards, 1):
-            title = card.get("title", card.get("paper_title", f"Paper {i}"))
-            abstract = card.get("summary", card.get("abstract", ""))
-            methods = card.get("methods", [])
-            datasets = card.get("datasets", [])
-            papers_text.append(f"Paper {i}: {title}\nAbstract: {abstract[:300]}\nMethods: {methods}\nDatasets: {datasets}")
+            title = _first_text(card, "title", "paper_title") or f"Paper {i}"
+            abstract = _first_text(card, "summary", "abstract", "content")
+            methods = _stringify_field_list(card.get("methods"))
+            datasets = _stringify_field_list(card.get("datasets"))
+            limitations = _stringify_field_list(card.get("limitations"))
+            metrics = _stringify_field_list(card.get("metrics"))
+            benchmarks = metrics or _infer_benchmark_terms(abstract)
+            evidence_source = "fulltext" if card.get("fulltext_available") or card.get("fulltext_snippets") else "abstract"
 
-        SYSTEM = f"""You are a survey paper analyst. Given paper metadata, build a structured comparison matrix.
+            row = {
+                "paper": title,
+                "methods": "; ".join(methods) or "Not specified in extracted evidence",
+                "datasets": "; ".join(datasets) or "Not specified in extracted evidence",
+                "benchmarks": "; ".join(benchmarks) or "Not specified in extracted evidence",
+                "limitations": "; ".join(limitations) or "Not explicitly stated in extracted evidence",
+                "evidence_source": evidence_source,
+                "year": card.get("published_year") or card.get("year"),
+                "arxiv_id": card.get("arxiv_id"),
+            }
+            rows.append(row)
 
-Output strictly JSON:
-{{"rows": [
-  {{"paper": "title", "methods": "...", "datasets": "...", "benchmarks": "...", "limitations": "..."}},
-  ...
-]}}"""
+            missing_dims = [
+                dim
+                for dim in ("methods", "datasets", "benchmarks", "limitations")
+                if str(row.get(dim, "")).startswith("Not ")
+            ]
+            if missing_dims:
+                missing.append(f"{title}: missing {', '.join(missing_dims)}")
 
-        user_prompt = (
-            "Compare these papers across the following dimensions: "
-            + ", ".join(dimensions) + "\n\n"
-            + "\n\n".join(papers_text)
-        )
+        header = ["Paper"] + [dim.title().replace("_", " ") for dim in dimensions]
+        table_lines = [" | ".join(header), " | ".join(["---"] * len(header))]
+        for row in rows:
+            cells = [row.get("paper", "")]
+            for dim in dimensions:
+                cells.append(str(row.get(dim, "")))
+            table_lines.append(" | ".join(cells))
 
-        resp = llm.invoke([
-            SystemMessage(content=SYSTEM),
-            HumanMessage(content=user_prompt),
-        ])
-        raw = resp.content if hasattr(resp, "content") else str(resp)
-        data = _extract_json(raw) or {}
-
-        rows = data.get("rows", [])
-        missing = [
-            card.get("title", f"Paper {i+1}")
-            for i, card in enumerate(paper_cards)
-            if not any(r.get("paper", "").lower() in card.get("title", "").lower()
-                       for r in rows)
-        ]
+        matrix_payload = {
+            "header": header,
+            "rows": rows,
+            "table_text": "\n".join(table_lines),
+        }
 
         if output_format == "json":
-            matrix = rows
-        else:
-            # Table format for display
-            header = ["Paper"] + dimensions
-            table_lines = [" | ".join(header), "|".join(["---"] * len(header))]
-            for row in rows:
-                cells = [row.get("paper", ""), *[row.get(d, "") for d in dimensions]]
-                table_lines.append(" | ".join(cells))
-            matrix = {"header": header, "rows": rows, "table_text": "\n".join(table_lines)}
+            matrix_payload = {"rows": rows}
 
         return {
-            "summary": f"对比矩阵构建完成：{len(rows)} 篇论文 × {len(dimensions)} 个维度",
-            "matrix": matrix,
+            "summary": (
+                f"Built a comparison matrix for {len(rows)} papers across "
+                f"{len(dimensions)} dimensions."
+            ),
+            "matrix": matrix_payload,
             "missing_fields": missing,
             "dimensions": dimensions,
         }
@@ -439,69 +423,142 @@ def writing_scaffold_generator(inputs: dict[str, Any], context: dict) -> dict:
         return {"error": "writing_scaffold_generator: topic is required"}
 
     try:
-        from src.agent.llm import build_reason_llm
-        from src.agent.settings import get_settings
-        from langchain_core.messages import HumanMessage, SystemMessage
+        rows = list(comparison_matrix.get("rows", [])) if isinstance(comparison_matrix, dict) else []
+        if not rows:
+            matrix_result = comparison_matrix_builder(
+                {
+                    "paper_cards": paper_cards,
+                    "compare_dimensions": ["methods", "datasets", "benchmarks", "limitations"],
+                },
+                context,
+            )
+            matrix_payload = matrix_result.get("matrix", {})
+            if isinstance(matrix_payload, dict):
+                rows = list(matrix_payload.get("rows", []))
 
-        settings = get_settings()
-        llm = build_reason_llm(settings, max_tokens=16384)
+        def _select_titles(*fields: str, limit: int) -> list[str]:
+            selected: list[str] = []
+            seen: set[str] = set()
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                paper = str(row.get("paper", "") or "").strip()
+                if not paper or paper in seen:
+                    continue
+                if fields:
+                    has_signal = False
+                    for field in fields:
+                        value = str(row.get(field, "") or "").strip()
+                        if value and not value.startswith("Not "):
+                            has_signal = True
+                            break
+                    if not has_signal:
+                        continue
+                selected.append(paper)
+                seen.add(paper)
+                if len(selected) >= limit:
+                    break
+            return selected
 
-        papers_text = ""
-        for i, card in enumerate(paper_cards[:10], 1):  # Limit to 10 papers
-            title = card.get("title", f"Paper {i}")
-            summary = card.get("summary", card.get("abstract", ""))
-            methods = card.get("methods", [])
-            papers_text += f"[{i}] {title}\n{summary[:300]}\nMethods: {methods}\n\n"
+        method_families = _top_phrases([str(row.get("methods", "")) for row in rows], limit=4)
+        dataset_terms = _top_phrases([str(row.get("datasets", "")) for row in rows], limit=4)
+        limitation_terms = _top_phrases([str(row.get("limitations", "")) for row in rows], limit=4)
+        evidence_titles = [str(row.get("paper", "")).strip() for row in rows if row.get("paper")]
+        broad_titles = _select_titles(limit=10) or evidence_titles[:10]
+        method_titles = _select_titles("methods", limit=10) or broad_titles[:10]
+        dataset_titles = _select_titles("datasets", limit=8) or broad_titles[:8]
+        benchmark_titles = _select_titles("benchmarks", limit=8) or dataset_titles[:8] or broad_titles[:8]
+        limitation_titles = _select_titles("limitations", limit=8) or broad_titles[:8]
 
-        length_map = {
-            "short": "5-8 sentences per section, concise",
-            "medium": "200-400 words per section, balanced depth",
-            "long": "500-800 words per section, comprehensive",
+        length_targets = {
+            "short": "Keep each major section concise and evidence-focused.",
+            "medium": "Develop each major section with enough depth for cross-paper synthesis.",
+            "long": "Expand each section with deeper comparisons, evidence gaps, and evaluation detail.",
         }
-        length_desc = length_map.get(desired_length, length_map["medium"])
 
-        SYSTEM = f"""You are an academic survey paper writing expert. Generate a structured writing scaffold.
+        scaffold = {
+            "title": _build_survey_title(topic, evidence_titles),
+            "abstract": [
+                f"State the review scope and problem setting for {topic}.",
+                "Name the corpus boundary, organizing logic, and central synthesis claim.",
+                "Close with the main evidence gaps and practical implications.",
+            ],
+            "introduction": [
+                "Define the topic, scope, and inclusion boundary.",
+                "Explain why the review matters and preview the organizing logic.",
+                "Avoid opening with a paper-by-paper inventory.",
+            ],
+            "background": [
+                "Separate enabling background from fully in-scope agent systems.",
+                "Use only the background needed to support the review question.",
+            ],
+            "taxonomy": [
+                f"Organize the literature into method families such as {', '.join(method_families) or 'agent architecture, multimodal grounding, and evaluation design'}.",
+                "Name representative papers in each category and justify the grouping rule.",
+            ],
+            "methods": [
+                "Compare architecture, tool use, modality fusion, and orchestration choices across papers.",
+                "Prefer cross-paper trade-offs over per-paper summaries.",
+            ],
+            "datasets": [
+                f"Summarize datasets, settings, and metrics, including {', '.join(dataset_terms) or 'benchmark coverage and missing evaluation detail'}.",
+                "Explicitly flag where dataset information is missing in the evidence.",
+            ],
+            "evaluation": [
+                "Contrast metrics, validation settings, and evidence quality.",
+                "Distinguish component-level gains from clinically meaningful outcomes.",
+            ],
+            "discussion": [
+                "Synthesize agreements, disagreements, trade-offs, and evidence gaps.",
+                "Explain what the current literature does and does not establish.",
+            ],
+            "future_work": [
+                "Derive future directions from missing evaluations, weak grounding, and unresolved trade-offs.",
+                f"Use recurring limitation clusters such as {', '.join(limitation_terms) or 'grounding, robustness, and deployment evidence'} as gap signals instead of rewriting limitation sentences.",
+            ],
+            "conclusion": [
+                "Close with the main takeaways and what the field still needs before reliable deployment.",
+            ],
+        }
 
-Output strictly JSON:
-{{"sections": {{
-  "title": "Proposed Survey Title",
-  "abstract": "150-word abstract",
-  "introduction": ["paragraph outline 1", "paragraph outline 2", ...],
-  "background": ["section outline 1", ...],
-  "methods_review": ["method 1: description", "method 2: description", ...],
-  "datasets_and_benchmarks": ["dataset 1: description", ...],
-  "challenges_and_limitations": ["challenge 1", ...],
-  "future_directions": ["direction 1", ...],
-  "conclusion": "conclusion paragraph outline"
-}},
-"outline": ["Section 1 Title", "Section 1.1 Subsection", ...],
-"writing_guidance": "guidance notes for authors"}}"""
+        outline = [
+            "1. Introduction",
+            "2. Background and Scope",
+            "3. Taxonomy of In-Scope Systems",
+            "4. Method Families and Tool Use",
+            "5. Datasets, Metrics, and Evaluation Design",
+            "6. Cross-Paper Discussion",
+            "7. Open Challenges and Future Directions",
+            "8. Conclusion",
+        ]
 
-        user_prompt = (
-            f"Research topic: {topic}\n\n"
-            f"Paper corpus ({len(paper_cards)} papers):\n{papers_text}\n\n"
-            f"Desired section length: {length_desc}\n\n"
-            "Generate a structured writing scaffold in JSON."
-        )
-
-        resp = llm.invoke([
-            SystemMessage(content=SYSTEM),
-            HumanMessage(content=user_prompt),
-        ])
-        raw = resp.content if hasattr(resp, "content") else str(resp)
-        data = _extract_json(raw) or {}
-
-        scaffold = data.get("sections", {})
-        outline = data.get("outline", [])
+        section_evidence_map = {
+            "introduction": broad_titles[:6],
+            "background": broad_titles[:4],
+            "taxonomy": method_titles[:8],
+            "methods": method_titles[:10],
+            "datasets": dataset_titles[:8],
+            "evaluation": benchmark_titles[:8],
+            "discussion": limitation_titles[:8],
+            "future_work": limitation_titles[:6] or broad_titles[:6],
+        }
 
         return {
             "summary": (
-                f"写作框架生成完成：{len(outline)} 个章节，"
-                f"覆盖 {len(paper_cards)} 篇论文"
+                f"Generated a survey writing scaffold with {len(outline)} sections "
+                f"for a corpus of {len(paper_cards)} papers."
             ),
             "scaffold": scaffold,
             "outline": outline,
-            "writing_guidance": data.get("writing_guidance", ""),
+            "section_evidence_map": section_evidence_map,
+            "writing_guidance": "\n".join(
+                [
+                    "Organize the review by themes and method families, not by paper order.",
+                    "Keep the discussion comparative: agreements, disagreements, trade-offs, and evidence gaps.",
+                    "Derive future directions from gaps in evaluation, grounding, or deployment evidence.",
+                    length_targets.get(desired_length, length_targets["medium"]),
+                ]
+            ),
             "desired_length": desired_length,
         }
 
@@ -530,3 +587,77 @@ def _extract_json(text: str) -> dict | None:
         except json.JSONDecodeError:
             pass
     return None
+
+
+def _clean_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _first_text(card: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = card.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _stringify_field_list(value: Any) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in _clean_list(value):
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(item)
+    return cleaned
+
+
+def _infer_benchmark_terms(text: str) -> list[str]:
+    lowered = str(text or "").lower()
+    markers = [
+        "accuracy",
+        "auc",
+        "dice",
+        "f1",
+        "sensitivity",
+        "specificity",
+        "calibration",
+        "latency",
+        "throughput",
+    ]
+    inferred = []
+    for marker in markers:
+        if marker in lowered:
+            inferred.append(marker.upper() if len(marker) <= 3 else marker)
+    return inferred
+
+
+def _top_phrases(values: list[str], *, limit: int) -> list[str]:
+    counts: dict[str, int] = {}
+    for value in values:
+        for part in re.split(r"[;,/]| and ", str(value or ""), flags=re.IGNORECASE):
+            cleaned = part.strip()
+            if not cleaned or cleaned.lower().startswith("not "):
+                continue
+            counts[cleaned] = counts.get(cleaned, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0].lower()))
+    return [item[0] for item in ranked[:limit]]
+
+
+def _build_survey_title(topic: str, evidence_titles: list[str]) -> str:
+    cleaned_topic = str(topic or "").strip().rstrip(".")
+    if cleaned_topic:
+        if "survey" in cleaned_topic.lower():
+            return cleaned_topic
+        return f"{cleaned_topic}: A Structured Survey"
+    if evidence_titles:
+        return f"{evidence_titles[0]} and Related Systems: A Structured Survey"
+    return "Structured Research Survey"

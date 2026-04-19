@@ -25,8 +25,10 @@ class GoldPaper:
 @dataclass
 class GoldEvidence:
     """单条 gold evidence 标准。"""
+    paper_id: str = ""
     paper_title: str = ""
     expected_section: str = ""
+    text: str = ""
     text_hint: str = ""
     sub_question_id: str = ""
     expected_support_type: str = ""

@@ -21,18 +21,14 @@ _MAX_IDS_PER_REQUEST = 50  # arXiv API 单次最多 50 个 ID
 def _extract_arxiv_id_from_url(url: str) -> str | None:
     """从 URL 中提取 arXiv ID（支持多种格式）。"""
     patterns = [
-        r"arxiv\.org/abs/(\d+\.\d+)v\d+",  # 带版本号
-        r"arxiv\.org/abs/(\d+\.\d+)",
-        r"arxiv\.org/pdf/(\d+\.\d+)v\d+\.pdf",
-        r"arxiv\.org/pdf/(\d+\.\d+)\.pdf",
-        r"arxiv\.org/abs/(\d+\.\d+)v\d+",
-        r"export\.arxiv\.org/abs/(\d+\.\d+)",
-        r"(\d{4}\.\d{4,5})",  # 宽松匹配（需验证）
+        r"arxiv\.org/(?:abs|pdf)/([a-z\-]+(?:\.[a-z\-]+)?/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?",
+        r"export\.arxiv\.org/abs/([a-z\-]+(?:\.[a-z\-]+)?/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?",
+        r"\b(\d{4}\.\d{4,5})(?:v\d+)?\b",
     ]
     for pattern in patterns:
         m = re.search(pattern, url)
         if m:
-            return m.group(1)
+            return _strip_version(m.group(1))
     return None
 
 
@@ -44,16 +40,15 @@ def _strip_version(aid: str) -> str:
 def _extract_arxiv_id_from_text(text: str) -> str | None:
     """从文本中提取 arXiv ID（支持多种格式）。"""
     patterns = [
-        r"arXiv:\s*(\d+\.\d+)",
-        r"arxiv\.org/\S*?(\d{4}\.\d{4,5})",
-        r"\b(\d{4}\.\d{4,5})\b",  # 纯数字格式（宽松匹配）
+        r"arXiv:\s*([a-z\-]+(?:\.[a-z\-]+)?/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?",
+        r"arxiv\.org/\S*?([a-z\-]+(?:\.[a-z\-]+)?/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?",
+        r"\b(\d{4}\.\d{4,5})(?:v\d+)?\b",
     ]
     for pattern in patterns:
         m = re.search(pattern, text)
         if m:
-            aid = m.group(1)
-            # 简单验证：4位年份.4-5位数字
-            if re.match(r"\d{4}\.\d{4,5}$", aid):
+            aid = _strip_version(m.group(1))
+            if re.match(r"([a-z\-]+(?:\.[a-z\-]+)?/\d{7}|\d{4}\.\d{4,5})$", aid):
                 return aid
     return None
 
@@ -158,7 +153,10 @@ def _fetch_arxiv_batch(arxiv_ids: list[str]) -> dict[str, dict[str, Any]]:
 
     for entry in entries:
         # 提 arXiv ID（从 id 字段，如 https://arxiv.org/abs/2301.01234）
-        id_m = re.search(r"<id>(https?://arxiv\.org/abs/(\d+\.\d+))</id>", entry)
+        id_m = re.search(
+            r"<id>(https?://arxiv\.org/abs/(([a-z\-]+(?:\.[a-z\-]+)?/\d{7})|(\d{4}\.\d{4,5}))(?:v\d+)?)</id>",
+            entry,
+        )
         if not id_m:
             continue
         arxiv_id = _strip_version(id_m.group(2))
@@ -195,7 +193,9 @@ def enrich_search_results_with_arxiv(
     for cand in candidates:
         url = cand.get("url", "")
         content = cand.get("content", "") or cand.get("abstract", "")
-        aid = _extract_arxiv_id_from_url(url)
+        aid = _strip_version(str(cand.get("arxiv_id") or "").strip()) if cand.get("arxiv_id") else None
+        if not aid:
+            aid = _extract_arxiv_id_from_url(url)
         if not aid:
             aid = _extract_arxiv_id_from_text(content)
         if not aid:
@@ -236,6 +236,11 @@ def enrich_search_results_with_arxiv(
     # ── Step 4：合并 metadata 到 candidates ────────────────────────
     for cand in deduped_candidates:
         aid = cand.get("_arxiv_id")
+        if aid:
+            cand["arxiv_id"] = aid
+            cand.setdefault("pdf_url", f"https://arxiv.org/pdf/{aid}.pdf")
+            if not cand.get("url"):
+                cand["url"] = f"https://arxiv.org/abs/{aid}"
         if aid and aid in meta_map:
             meta = meta_map[aid]
             cand["title"] = meta.get("title") or cand.get("title", "")

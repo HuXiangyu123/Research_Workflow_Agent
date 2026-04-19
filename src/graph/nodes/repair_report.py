@@ -1,6 +1,53 @@
 from __future__ import annotations
 
-REQUIRED_SECTIONS = {"标题", "核心贡献", "方法概述", "关键实验", "局限性"}
+SECTION_REQUIREMENTS = {
+    "title": {"title", "Title", "标题"},
+    "overview": {
+        "paper_information",
+        "Paper Information",
+        "core_contributions",
+        "Core Contributions",
+        "abstract",
+        "Abstract",
+        "abstract_and_motivation",
+        "Abstract And Motivation",
+        "核心贡献",
+        "论文信息",
+    },
+    "methods": {"methods", "Methods", "methods_review", "Methods Review", "方法概述"},
+    "evidence": {
+        "experiments",
+        "Experiments",
+        "experiments_and_results",
+        "Experiments And Results",
+        "evaluation",
+        "Evaluation",
+        "results",
+        "Results",
+        "关键实验",
+    },
+    "limitations": {
+        "limitations",
+        "Limitations",
+        "discussion",
+        "Discussion",
+        "discussion_and_future_directions",
+        "Discussion And Future Directions",
+        "challenges",
+        "Challenges",
+        "challenges_and_limitations",
+        "Challenges And Limitations",
+        "局限性",
+    },
+}
+
+
+def _missing_requirements(existing: set[str]) -> set[str]:
+    missing: set[str] = set()
+    for requirement, aliases in SECTION_REQUIREMENTS.items():
+        if not existing.intersection(aliases):
+            missing.add(requirement)
+    return missing
 
 
 def repair_report(state: dict) -> dict:
@@ -9,7 +56,7 @@ def repair_report(state: dict) -> dict:
         return {"warnings": ["repair_report: no draft_report, skipping"]}
 
     existing = set(report.sections.keys())
-    missing = REQUIRED_SECTIONS - existing
+    missing = _missing_requirements(existing)
 
     if not missing and len(report.citations) > 0:
         return {}
@@ -20,10 +67,10 @@ def repair_report(state: dict) -> dict:
         from langchain_core.messages import HumanMessage, SystemMessage
 
         from src.agent.settings import Settings
-        from src.agent.llm import build_deepseek_chat
+        from src.agent.llm import build_reason_llm
 
         settings = Settings.from_env()
-        llm = build_deepseek_chat(settings)
+        llm = build_reason_llm(settings)
 
         current_sections = json.dumps(report.sections, ensure_ascii=False, indent=2)
         repair_prompt = (

@@ -21,6 +21,11 @@ class RagResult:
     替代字符串拼接，作为后续 workflow 的正式 artifact。
     原始版本见 corpus/store/repository.py 的 EvidenceSearchResult。
     """
+    # Legacy chunk-level fields used by the report graph evidence bundle.
+    text: str = ""
+    doc_id: str = ""
+    score: float = 0.0
+
     # 检索上下文
     query: str = ""
     sub_questions: list[str] = field(default_factory=list)

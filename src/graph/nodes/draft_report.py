@@ -11,12 +11,13 @@ DRAFT_SYSTEM_PROMPT = """You are a literature report generator. Given paper meta
 Output format (JSON only, no markdown):
 {
   "sections": {
-    "标题": "...",
-    "核心贡献": "...",
-    "方法概述": "...",
-    "关键实验": "...",
-    "局限性": "...",
-    "相关工作": "..."
+    "title": "Specific English report title",
+    "paper_information": "...",
+    "core_contributions": "...",
+    "methods": "...",
+    "experiments_and_results": "...",
+    "limitations": "...",
+    "related_work": "..."
   },
   "claims": [
     {"id": "c1", "text": "claim text", "citation_labels": ["[1]"]}
@@ -53,10 +54,10 @@ def draft_report(state: dict) -> dict:
 
     try:
         from src.agent.settings import Settings
-        from src.agent.llm import build_deepseek_chat
+        from src.agent.llm import build_reason_llm
 
         settings = Settings.from_env()
-        llm = build_deepseek_chat(settings)
+        llm = build_reason_llm(settings)
 
         messages = [
             SystemMessage(content=DRAFT_SYSTEM_PROMPT),
@@ -92,7 +93,7 @@ def draft_report(state: dict) -> dict:
 
     except json.JSONDecodeError:
         fallback = DraftReport(
-            sections={"报告": text if "text" in dir() else "Generation failed"},
+            sections={"report": text if "text" in dir() else "Generation failed"},
             claims=[],
             citations=[],
         )

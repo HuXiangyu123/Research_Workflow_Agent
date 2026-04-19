@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from src.models.research import SearchPlan
+from src.models.report import DraftReport
+from src.models.review import ReviewFeedback
 from src.research.agents.analyst_agent import AnalystAgent
 from src.research.agents.clarify_agent import build_clarify_agent_graph, run as run_clarify_agent
 from src.research.agents.planner_agent import PlannerAgent
@@ -95,6 +97,36 @@ def test_planner_agent_run_executes_langgraph_nodes_in_order(monkeypatch):
     assert result["validation"]["status"] == "complete"
 
 
+def test_planner_agent_coerces_out_of_range_priorities_before_validation():
+    agent = PlannerAgent()
+
+    normalized = agent._coerce_plan_payload(
+        {
+            "plan_goal": "Collect recent RAG papers",
+            "query_groups": [
+                {
+                    "group_id": "g1",
+                    "queries": ["rag retrieval"],
+                    "intent": "exploration",
+                    "priority": 4,
+                    "expected_hits": 8,
+                },
+                {
+                    "group_id": "g2",
+                    "queries": ["dense retrieval"],
+                    "intent": "refinement",
+                    "priority": 0,
+                    "expected_hits": 6,
+                },
+            ],
+        }
+    )
+
+    plan = SearchPlan.model_validate(normalized)
+
+    assert [group.priority for group in plan.query_groups] == [3, 1]
+
+
 def test_retriever_agent_run_builds_rag_result_with_langgraph(monkeypatch):
     agent = RetrieverAgent(workspace_id="ws-1")
     graph = agent.build_graph().get_graph()
@@ -108,7 +140,7 @@ def test_retriever_agent_run_builds_rag_result_with_langgraph(monkeypatch):
     monkeypatch.setattr(
         agent,
         "_augmented_query_gen",
-        lambda brief: {"queries": [{"query": "rag", "sources": ["arxiv"], "expected_hits": 5}]},
+        lambda brief, search_plan=None: {"queries": [{"query": "rag", "sources": ["arxiv"], "expected_hits": 5}]},
     )
     monkeypatch.setattr(
         agent,
@@ -147,6 +179,165 @@ def test_retriever_agent_run_builds_rag_result_with_langgraph(monkeypatch):
     assert result["rag_result"]["paper_candidates"][0]["title"] == "RAG Paper"
 
 
+def test_retriever_agent_fallback_candidates_enriches_arxiv_metadata(monkeypatch):
+    agent = RetrieverAgent(workspace_id="ws-1")
+
+    monkeypatch.setattr(
+        "src.tools.arxiv_api.enrich_search_results_with_arxiv",
+        lambda candidates: [{**candidates[0], "arxiv_id": "2407.15621", "pdf_url": "https://arxiv.org/pdf/2407.15621.pdf"}],
+    )
+
+    candidates = agent._fallback_candidates(
+        [
+            {
+                "query": "radiology rag",
+                "hits": [
+                    {
+                        "title": "RadioRAG",
+                        "url": "https://arxiv.org/abs/2407.15621v3",
+                        "content": "radiology retrieval paper",
+                        "engine": "arxiv",
+                        "publishedDate": "2024-07-22",
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert candidates[0]["arxiv_id"] == "2407.15621"
+    assert candidates[0]["pdf_url"] == "https://arxiv.org/pdf/2407.15621.pdf"
+
+
+def test_retriever_agent_queries_from_search_plan_round_robins_groups():
+    agent = RetrieverAgent(workspace_id="ws-1")
+
+    queries = agent._queries_from_search_plan(
+        {
+            "source_preferences": ["arxiv", "semantic_scholar"],
+            "query_groups": [
+                {
+                    "priority": 1,
+                    "intent": "exploration",
+                    "expected_hits": 10,
+                    "queries": [f"explore {idx}" for idx in range(6)],
+                },
+                {
+                    "priority": 2,
+                    "intent": "refinement",
+                    "expected_hits": 8,
+                    "queries": [f"refine {idx}" for idx in range(5)],
+                },
+                {
+                    "priority": 3,
+                    "intent": "validation",
+                    "expected_hits": 6,
+                    "queries": [f"validate {idx}" for idx in range(4)],
+                },
+            ],
+        }
+    )
+
+    assert len(queries) == 12
+    assert [item["query"] for item in queries[:6]] == [
+        "explore 0",
+        "refine 0",
+        "validate 0",
+        "explore 1",
+        "refine 1",
+        "validate 1",
+    ]
+
+
+def test_retriever_agent_fallback_candidates_round_robins_query_hits(monkeypatch):
+    agent = RetrieverAgent(workspace_id="ws-1")
+
+    monkeypatch.setattr(
+        "src.tools.arxiv_api.enrich_search_results_with_arxiv",
+        lambda candidates: candidates,
+    )
+
+    candidates = agent._fallback_candidates(
+        [
+            {
+                "query": "q1",
+                "query_order": 0,
+                "hits": [
+                    {"title": "A1", "url": "https://example.com/a1", "content": "a1", "engine": "arxiv"},
+                    {"title": "A2", "url": "https://example.com/a2", "content": "a2", "engine": "arxiv"},
+                ],
+            },
+            {
+                "query": "q2",
+                "query_order": 1,
+                "hits": [
+                    {"title": "B1", "url": "https://example.com/b1", "content": "b1", "engine": "arxiv"},
+                    {"title": "B2", "url": "https://example.com/b2", "content": "b2", "engine": "arxiv"},
+                ],
+            },
+        ]
+    )
+
+    assert [item["title"] for item in candidates[:4]] == ["A1", "B1", "A2", "B2"]
+
+
+def test_retriever_agent_build_rag_result_recovers_from_direct_sources_when_tag_hits_are_empty(monkeypatch):
+    agent = RetrieverAgent(workspace_id="ws-1")
+
+    monkeypatch.setattr(
+        "src.tools.arxiv_api.search_arxiv_direct",
+        lambda query, max_results=10, year_filter=None, filter_noise=True: [
+            {
+                "title": "Recovered Medical Imaging Agent",
+                "url": "https://arxiv.org/abs/2401.00001",
+                "abstract": "medical imaging agent workflow for diagnosis and triage",
+                "arxiv_id": "2401.00001",
+                "published_year": 2024,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "src.tools.deepxiv_client.search_papers",
+        lambda query, size=10, date_from=None, categories=None: [],
+    )
+    monkeypatch.setattr(
+        "src.tools.arxiv_api.enrich_search_results_with_arxiv",
+        lambda candidates: candidates,
+    )
+    monkeypatch.setattr(
+        "src.research.graph.nodes.search._rerank_and_filter_candidates",
+        lambda candidates, brief, search_plan: (candidates, [{"strategy": "test"}]),
+    )
+    monkeypatch.setattr(
+        "src.research.graph.nodes.search._ingest_paper_candidates",
+        lambda candidates, workspace_id=None: None,
+    )
+
+    rag_result = agent._build_rag_result(
+        brief={"topic": "medical imaging diagnosis and triage agents", "time_range": "2023 to 2026"},
+        search_plan={
+            "plan_goal": "Collect medical imaging diagnosis and triage agents",
+            "query_groups": [
+                {
+                    "intent": "exploration",
+                    "expected_hits": 10,
+                    "queries": ["medical imaging diagnosis and triage agents"],
+                }
+            ],
+        },
+        raw_results=[
+            {
+                "query": "medical imaging diagnosis and triage agents",
+                "query_meta": {"intent": "exploration", "expected_hits": 10},
+                "hits": [],
+            }
+        ],
+        candidates=[],
+    )
+
+    assert rag_result["paper_candidates"][0]["title"] == "Recovered Medical Imaging Agent"
+    assert any("arXiv direct / DeepXiv" in note for note in rag_result["coverage_notes"])
+
+
 def test_analyst_agent_run_emits_draft_report_and_markdown(monkeypatch):
     agent = AnalystAgent()
     graph = agent.build_graph().get_graph()
@@ -175,7 +366,7 @@ def test_analyst_agent_run_emits_draft_report_and_markdown(monkeypatch):
     monkeypatch.setattr(
         agent,
         "_build_outline",
-        lambda state: {"outline": {"introduction": ["Background"], "methods": ["Dense retrieval"]}, "confidence": 0.75},
+        lambda state, brief=None: {"outline": {"introduction": ["Background"], "methods": ["Dense retrieval"]}, "confidence": 0.75},
     )
     monkeypatch.setattr(
         agent,
@@ -195,7 +386,28 @@ def test_analyst_agent_run_emits_draft_report_and_markdown(monkeypatch):
             "confidence": 0.85,
         },
     )
+    monkeypatch.setattr(agent, "_needs_grounded_redraft", lambda draft_report: False)
     monkeypatch.setattr(agent, "_store_artifacts_memory", lambda state: None)
+    monkeypatch.setattr(
+        "src.research.graph.nodes.draft._build_draft_report",
+        lambda cards, brief: DraftReport(
+            sections={
+                "title": "RAG Survey",
+                "abstract": "Summary",
+                "introduction": "Intro",
+                "background": "Background",
+                "taxonomy": "Taxonomy",
+                "methods": "Methods",
+                "datasets": "Datasets",
+                "evaluation": "Evaluation",
+                "discussion": "Discussion",
+                "future_work": "Future",
+                "conclusion": "Done",
+            },
+            claims=[],
+            citations=[],
+        ),
+    )
 
     result = agent.run({"topic": "RAG"}, [{"title": "Paper 1"}])
 
@@ -256,3 +468,29 @@ def test_reviewer_agent_langgraph_loops_until_review_passes(monkeypatch):
     assert attempts == [1, 2]
     assert result["review_passed"] is True
     assert result["total_attempts"] == 2
+
+
+def test_reviewer_agent_awaits_async_review_service_and_stores_serializable_feedback(monkeypatch):
+    agent = ReviewerAgent(workspace_id="ws-1", task_id="task-1")
+
+    monkeypatch.setattr(agent, "_retrieve_reflections", lambda brief, draft_report: [])
+
+    async def fake_review(self, **kwargs):
+        return ReviewFeedback(
+            task_id=kwargs["task_id"],
+            workspace_id=kwargs["workspace_id"],
+            passed=True,
+            summary="async reviewer ok",
+        )
+
+    monkeypatch.setattr("src.research.services.reviewer.ReviewerService.review", fake_review)
+
+    result = agent.run(
+        {"topic": "RAG"},
+        [{"title": "Paper 1"}],
+        {"sections": {"introduction": "Intro"}},
+    )
+
+    assert result["review_passed"] is True
+    assert result["review_feedback"]["passed"] is True
+    assert result["total_attempts"] == 1

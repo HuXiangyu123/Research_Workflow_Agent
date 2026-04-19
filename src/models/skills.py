@@ -67,4 +67,5 @@ class SkillRunResponse(BaseModel):
     output_artifact_ids: list[str] = Field(default_factory=list)
     trace_refs: list[str] = Field(default_factory=list)
     summary: str | None = None
+    result: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)

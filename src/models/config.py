@@ -20,6 +20,11 @@ class AgentMode(str, Enum):
     REVIEWER = "reviewer"
 
 
+class SupervisorMode(str, Enum):
+    GRAPH = "graph"
+    LLM_HANDOFF = "llm_handoff"
+
+
 class NodeBackendMode(str, Enum):
     LEGACY = "legacy"
     V2 = "v2"
@@ -83,9 +88,11 @@ class Phase4Config(BaseModel):
 
     execution_mode: ExecutionMode = ExecutionMode.HYBRID
     agent_mode: AgentMode = AgentMode.AUTO
+    supervisor_mode: SupervisorMode = SupervisorMode.GRAPH
     enable_mcp: bool = True
     enable_skills: bool = True
     enable_replan: bool = True
+    auto_fill: bool = False
     node_backends: NodeBackendConfig = Field(default_factory=NodeBackendConfig)
 
 
@@ -132,6 +139,6 @@ class ModelConfig(BaseModel):
     # provider 支持的模型列表（固定预定义）
     provider_models: dict[str, list[str]] = Field(default_factory=lambda: {
         "deepseek": ["deepseek-chat", "deepseek-reasoner"],
-        "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+        "openai": ["gpt-5.4", "gpt-5.1-codex-mini", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
         "ark": ["deepseek-v3-2-251201", "doubao-pro-32k"],
     })

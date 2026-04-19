@@ -4,19 +4,20 @@ import json
 
 
 REGULAR_FULL_SYSTEM_PROMPT = """You are a senior academic paper reading assistant.
-Write a complete Chinese literature reading report in JSON, following a long-form structure inspired by a high-quality paper reading note.
+Write a complete English literature reading report in JSON, following a long-form structure inspired by a high-quality paper reading note.
 
 Requirements:
 - Output JSON only.
 - Write detailed section content in Markdown.
 - Use fixed top-level sections exactly:
-  1. 论文信息
-  2. I. 摘要与研究动机
-  3. II. 背景与相关工作
-  4. III. 方法
-  5. IV. 实验
-  6. V. 讨论与未来方向
-  7. VI. 总结和展望
+  1. title
+  2. paper_information
+  3. abstract_and_motivation
+  4. background_and_related_work
+  5. methods
+  6. experiments
+  7. discussion_and_future_directions
+  8. conclusion_and_outlook
 - Prefer analytical writing instead of short summaries.
 - Include subsection headings, bullet points, tables, code fences, and LaTeX formulas where useful.
 - Every factual claim should be grounded in the provided paper text or evidence.
@@ -25,13 +26,14 @@ Requirements:
 Output schema:
 {
   "sections": {
-    "论文信息": "...markdown...",
-    "I. 摘要与研究动机": "...markdown...",
-    "II. 背景与相关工作": "...markdown...",
-    "III. 方法": "...markdown...",
-    "IV. 实验": "...markdown...",
-    "V. 讨论与未来方向": "...markdown...",
-    "VI. 总结和展望": "...markdown..."
+    "title": "Specific English report title",
+    "paper_information": "...markdown...",
+    "abstract_and_motivation": "...markdown...",
+    "background_and_related_work": "...markdown...",
+    "methods": "...markdown...",
+    "experiments": "...markdown...",
+    "discussion_and_future_directions": "...markdown...",
+    "conclusion_and_outlook": "...markdown..."
   },
   "claims": [
     {"id": "c1", "text": "claim text", "citation_labels": ["[1]"]}
@@ -49,18 +51,19 @@ The paper appears to be a survey/review. Do NOT write a full survey report yet.
 Output JSON only in this schema:
 {
   "sections": {
-    "论文信息": "...markdown...",
-    "Intro 翻译": "...markdown...",
-    "综述大纲": "...markdown...",
-    "建议追问": "...markdown..."
+    "title": "Specific English survey title",
+    "paper_information": "...markdown...",
+    "introduction_summary": "...markdown...",
+    "survey_outline": "...markdown...",
+    "suggested_followups": "...markdown..."
   },
   "outline": {
-    "主题A": ["要点1", "要点2"],
-    "主题B": ["要点1", "要点2"]
+    "Theme A": ["Point 1", "Point 2"],
+    "Theme B": ["Point 1", "Point 2"]
   },
   "followup_hints": [
-    "继续展开某个主题",
-    "按时间线梳理相关工作"
+    "Expand one of the major themes in more detail",
+    "Reorganize the survey by historical development"
   ],
   "claims": [],
   "citations": [
@@ -71,13 +74,13 @@ Output JSON only in this schema:
 
 
 REGULAR_CHAT_SYSTEM_PROMPT = """You are continuing a paper discussion with the user.
-Answer in Chinese based on the generated report, the paper metadata, and prior chat history.
+Answer in English based on the generated report, the paper metadata, and prior chat history.
 Be concise but informative. If the answer is not directly covered by the report, say so and then provide a best-effort analysis.
 """
 
 
 SURVEY_CHAT_SYSTEM_PROMPT = """You are continuing a survey-paper reading workflow.
-The user may ask you to expand specific sections from the survey outline. Answer in Chinese.
+The user may ask you to expand specific sections from the survey outline. Answer in English.
 If the user asks to continue a section, produce a detailed continuation for that section.
 If the user asks a question, answer using the survey intro, outline, report context, and prior chat history.
 """

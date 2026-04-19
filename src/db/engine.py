@@ -74,6 +74,19 @@ def get_session_factory() -> sessionmaker:
     return _SessionFactory
 
 
+def reset_engine() -> None:
+    """Dispose cached SQLAlchemy engine/session factory.
+
+    Tests and local config reloads use this after changing DATABASE_URL or
+    persistence settings.
+    """
+    global _ENGINE, _SessionFactory
+    if _ENGINE is not None:
+        _ENGINE.dispose()
+    _ENGINE = None
+    _SessionFactory = None
+
+
 @contextmanager
 def get_db_session() -> Generator[Session, None, None]:
     session = get_session_factory()()

@@ -15,6 +15,16 @@ alwaysApply: true
 - Frontend uses React 19, TypeScript 5, Vite 8, Tailwind CSS 4, and `@xyflow/react`.
 - Tests use pytest and FastAPI `TestClient`.
 
+# LangGraph Implementation Rules
+
+- **Node orchestration**: Must use `langgraph.graph.StateGraph`, never use Python `for`/`while` loops to simulate graph execution.
+- **State persistence**: Must use `langgraph.checkpoint.*` (PostgresSaver / MemorySaver), never use JSON files for durable state.
+- **Agent building**: Prefer `langgraph.prebuilt.chat_agent`, `create_react_agent`, or `langgraph_sdk.Agent`, never build agent loops from scratch.
+- **Memory**: Must use `langgraph.checkpoint.base.BaseCheckpointSaver`, never implement custom multi-layer memory (SensoryMemory / WorkingMemory / SemanticMemory / EpisodicMemory).
+- **Multi-agent supervisor**: Must use `langgraph.supervisor` or `langgraph_sdk.multi_agent`, never implement supervisor logic with Python class + dispatch pattern.
+- **Before implementing**: When adding new nodes, agents, or orchestration logic, always check if LangGraph / LangChain has an official API for it first. If yes, use the official API. If no, get approval before custom implementation.
+- **Existing violations to fix**: `src/memory/manager.py` (custom JSON memory), `src/research/agents/supervisor.py` (manual for-loop collaboration), `src/research/agents/*.py` (custom agent class patterns) — these should be migrated to LangGraph/LangChain official patterns.
+
 # Hard Rules
 
 - Never add SQLite databases, `.sqlite` files, or SQLite-specific code paths.

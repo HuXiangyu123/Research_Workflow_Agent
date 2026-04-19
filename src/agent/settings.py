@@ -18,9 +18,13 @@ class Settings:
     ark_api_key: str
     ark_base_url: str
     ark_model: str
+    reason_model: str = field(default="")
+    quick_model: str = field(default="")
 
     # SearXNG 配置（新增）
     searxng_base_url: str = field(default="")
+    deepxiv_token: str = field(default="")
+    deepxiv_base_url: str = field(default="https://data.rag.ac.cn")
 
     # 数据库配置（新增，用于 PostgreSQL 连接）
     database_url: str = field(default="")
@@ -57,13 +61,28 @@ class Settings:
             openai_api_key=openai_key,
             openai_base_url=os.getenv("OPENAI_API_BASE", "").strip(),
             openai_model=os.getenv("OPENAI_MODEL", "gpt-4o").strip(),
+            reason_model=(
+                os.getenv("REASON_MODEL", "").strip()
+                or os.getenv("OPENAI_MODEL", "gpt-4o").strip()
+            ),
+            quick_model=(
+                os.getenv("QUICK_MODEL", "").strip()
+                or os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+            ),
             ark_api_key=ark_key,
             ark_base_url=os.getenv(
                 "ARK_API_BASE", "https://ark.cn-beijing.volces.com/api/v3"
             ).strip(),
             ark_model=os.getenv("ARK_MODEL", "").strip(),
-            searxng_base_url=os.getenv("SEARXNG_BASE_URL", "http://127.0.0.1:8080").strip(),
+            searxng_base_url=os.getenv("SEARXNG_BASE_URL", "http://127.0.0.1:8081").strip(),
+            deepxiv_token=os.getenv("DEEPXIV_TOKEN", "").strip(),
+            deepxiv_base_url=os.getenv("DEEPXIV_BASE_URL", "https://data.rag.ac.cn").strip(),
             database_url=os.getenv("DATABASE_URL", "").strip(),
             llm_timeout_s=int(os.getenv("LLM_TIMEOUT_S", "45").strip()),
             llm_max_retries=int(os.getenv("LLM_MAX_RETRIES", "1").strip()),
         )
+
+
+def get_settings() -> Settings:
+    """Compatibility helper for modules that expect a settings factory."""
+    return Settings.from_env()

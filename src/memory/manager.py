@@ -1,27 +1,17 @@
-"""Agent Memory System — 三层 Memory 架构。
+"""Agent memory adapter backed by LangGraph checkpoint interfaces.
 
-严格遵循 academic agent memory 标准定义：
-
-┌─────────────────────────────────────────────────┐
-│  SensoryMemory（感官记忆）                        │
-│  → 当前轮次工具输出、外部信号、用户输入            │
-├─────────────────────────────────────────────────┤
-│  WorkingMemory（工作记忆）                        │
-│  → 当前会话 LLM 上下文窗口内容                     │
-│  → agent 循环迭代状态（SearchPlannerMemory）       │
-│  → 跨节点状态传递（AgentState）                   │
-├─────────────────────────────────────────────────┤
-│  LongTermMemory（长期记忆）                       │
-│  → SemanticMemory：向量语义检索                  │
-│  → EpisodicMemory：跨会话情景记忆（任务轨迹）     │
-│  → PreferenceMemory：用户偏好与显式记录           │
-└─────────────────────────────────────────────────┘
+The runtime-facing API is intentionally small and transient. Earlier versions
+persisted semantic/episodic/preference memory as JSON files under ``.memory``;
+that violates the current project rules. This module now keeps short-lived
+memory in process and exposes a LangGraph ``BaseCheckpointSaver`` for graph
+state ownership. Durable memory should be added through PostgreSQL-backed
+services only.
 
 用法：
     from src.memory import get_memory_manager
     mm = get_memory_manager(workspace_id="ws_xxx")
     mm.add_sensory("search_result", {"query": "...", "results": [...]})
-    context = mm.build_context(topic="RAG")  # 查询相关 long-term memory
+    context = mm.build_context(topic="RAG")  # 查询相关 runtime memory
     mm.inject_into_prompt(messages, context)  # 注入 LLM prompt
 """
 
@@ -32,43 +22,14 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum
-from pathlib import Path
 from typing import Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 import numpy as np
 
+from src.agent.checkpointing import get_langgraph_checkpointer
+
 logger = logging.getLogger(__name__)
-
-
-# ─── 基础存储 ────────────────────────────────────────────────────────────────
-
-
-def _ensure_dir(path: str) -> None:
-    import os
-
-    os.makedirs(path, exist_ok=True)
-
-
-def _read_json(path: str, default: Any) -> Any:
-    import os
-
-    if not os.path.exists(path):
-        return default
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _write_json(path: str, obj: Any) -> None:
-    import os
-
-    parent = os.path.dirname(path)
-    if parent:
-        _ensure_dir(parent)
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, path)
 
 
 def _looks_like_secret(text: str) -> bool:
@@ -76,23 +37,12 @@ def _looks_like_secret(text: str) -> bool:
     return any(k in s for k in ["api_key", "apikey", "token", "secret", "sk-"])
 
 
-# ─── Memory Tier 枚举 ───────────────────────────────────────────────────────
-
-
-class MemoryTier(str, Enum):
-    SENSORY = "sensory"      # 感官记忆：即时感知信号
-    WORKING = "working"      # 工作记忆：当前会话上下文
-    SEMANTIC = "semantic"    # 语义记忆：向量化的知识
-    EPISODIC = "episodic"    # 情景记忆：任务执行轨迹
-    PREFERENCE = "preference"  # 偏好记忆：用户显式偏好
-
-
-# ─── SensoryMemory（感官记忆）────────────────────────────────────────────────
+# ─── Runtime Event Buffer ───────────────────────────────────────────────────
 
 
 @dataclass
-class SensoryEvent:
-    """单个感官事件：工具输出、用户输入、外部信号。"""
+class RuntimeEvent:
+    """Single runtime event: tool output, user input, or external signal."""
 
     event_id: str
     event_type: str          # "tool_output" | "user_input" | "external_signal"
@@ -115,9 +65,9 @@ class SensoryEvent:
         }
 
 
-class SensoryMemory:
+class RuntimeEventBuffer:
     """
-    感官记忆：记录当前会话轮次的所有即时感知信号。
+    Runtime event buffer for the current process/session.
 
     容量：最近 50 个事件（环形缓冲）
     TTL：当前会话内有效
@@ -127,7 +77,7 @@ class SensoryMemory:
 
     def __init__(self, workspace_id: str):
         self._workspace_id = workspace_id
-        self._events: list[SensoryEvent] = []
+        self._events: list[RuntimeEvent] = []
         self._event_counter = 0
 
     def add(self, event_type: str, content: str | dict, metadata: dict | None = None) -> str:
@@ -135,7 +85,7 @@ class SensoryMemory:
             return ""
         event_id = f"se_{self._workspace_id}_{self._event_counter}"
         self._event_counter += 1
-        event = SensoryEvent(
+        event = RuntimeEvent(
             event_id=event_id,
             event_type=event_type,
             content=content,
@@ -152,7 +102,7 @@ class SensoryMemory:
     def add_user_input(self, text: str) -> str:
         return self.add("user_input", text)
 
-    def recent(self, n: int = 10, event_type: str | None = None) -> list[SensoryEvent]:
+    def recent(self, n: int = 10, event_type: str | None = None) -> list[RuntimeEvent]:
         events = self._events[-n:] if n > 0 else self._events
         if event_type:
             events = [e for e in events if e.event_type == event_type]
@@ -170,13 +120,13 @@ class SensoryMemory:
         return "\n".join(lines)
 
 
-# ─── WorkingMemory（工作记忆）────────────────────────────────────────────────
+# ─── Runtime Working State ──────────────────────────────────────────────────
 
 
 @dataclass
-class WorkingMemory:
+class RuntimeWorkingState:
     """
-    工作记忆：当前会话的 LLM 上下文和 agent 循环状态。
+    Current-session LLM context and agent loop state.
 
     包含：
     - messages：当前上下文窗口内的对话消息
@@ -213,12 +163,12 @@ class WorkingMemory:
         return self.agent_state.get(key, default)
 
 
-# ─── SemanticMemory（语义记忆）───────────────────────────────────────────────
+# ─── Runtime Vector Cache ───────────────────────────────────────────────────
 
 
 @dataclass
-class SemanticEntry:
-    """语义记忆条目：文本 + 向量 + 元数据。"""
+class RuntimeMemoryEntry:
+    """Runtime vector cache entry: text + vector + metadata."""
 
     entry_id: str
     text: str
@@ -240,38 +190,28 @@ class SemanticEntry:
         }
 
 
-class SemanticMemory:
+class RuntimeVectorCache:
     """
-    语义记忆：基于向量检索的长期知识存储。
+    Vector-based runtime knowledge cache.
 
     依赖：src.embeddings.get_embedding_client
-    存储：JSON 文件（每 workspace 一个文件，条目少时够用）
+    存储：进程内 transient cache；长期存储必须走 PostgreSQL 服务层
     检索：cosine similarity（numpy 实现）
     """
 
     MAX_ENTRIES = 500
 
-    def __init__(self, workspace_id: str, storage_dir: str = ".memory/semantic"):
+    def __init__(self, workspace_id: str, storage_dir: str | None = None):
         self._workspace_id = workspace_id
-        self._storage_path = Path(storage_dir) / f"{workspace_id}.json"
-        self._entries: list[SemanticEntry] = []
+        self._entries: list[RuntimeMemoryEntry] = []
         self._loaded = False
         self._client = None
 
     def _ensure_loaded(self) -> None:
-        if self._loaded:
-            return
         self._loaded = True
-        if self._storage_path.exists():
-            data = _read_json(str(self._storage_path), {"entries": []})
-            for raw in data.get("entries", []):
-                if raw.get("text") and raw.get("vector"):
-                    self._entries.append(SemanticEntry(**raw))
 
     def _save(self) -> None:
-        _ensure_dir(str(self._storage_path.parent))
-        data = {"entries": [e.to_dict() for e in self._entries[-self.MAX_ENTRIES:]]}
-        _write_json(str(self._storage_path), data)
+        return
 
     def add(self, text: str, memory_type: str = "domain_knowledge", metadata: dict | None = None) -> str:
         """添加语义记忆条目（自动生成向量）。"""
@@ -285,14 +225,14 @@ class SemanticMemory:
             client = get_embedding_client()
             vec = client.encode([text])[0].tolist()
         except Exception as exc:
-            logger.warning("[SemanticMemory] embedding failed: %s, using zero vector", exc)
+            logger.warning("[RuntimeVectorCache] embedding failed: %s, using zero vector", exc)
             from src.embeddings import get_embedding_dimension
 
             dim = get_embedding_dimension()
             vec = [0.0] * dim
 
         entry_id = f"sm_{self._workspace_id}_{len(self._entries)}"
-        entry = SemanticEntry(
+        entry = RuntimeMemoryEntry(
             entry_id=entry_id,
             text=text,
             vector=vec,
@@ -306,7 +246,7 @@ class SemanticMemory:
         self._save()
         return entry_id
 
-    def search(self, query: str, top_k: int = 5, memory_type: str | None = None) -> list[SemanticEntry]:
+    def search(self, query: str, top_k: int = 5, memory_type: str | None = None) -> list[RuntimeMemoryEntry]:
         """
         语义检索：返回与 query 最相似的 top_k 条记忆。
 
@@ -322,7 +262,7 @@ class SemanticMemory:
         try:
             query_vec = get_embedding_client().encode([query])[0]
         except Exception as exc:
-            logger.warning("[SemanticMemory] query embedding failed: %s", exc)
+            logger.warning("[RuntimeVectorCache] query embedding failed: %s", exc)
             return []
 
         query_vec = np.array(query_vec)
@@ -350,19 +290,19 @@ class SemanticMemory:
         if not entries:
             return ""
 
-        lines = ["## 长期记忆（语义检索）："]
+        lines = ["## 运行期记忆（向量检索）："]
         for e in entries:
             age = _format_age(e.created_at)
             lines.append(f"[{e.memory_type}] ({age}) {e.text[:300]}")
         return "\n".join(lines)
 
 
-# ─── EpisodicMemory（情景记忆）───────────────────────────────────────────────
+# ─── Runtime Episode Log ────────────────────────────────────────────────────
 
 
 @dataclass
-class Episode:
-    """单个情景记忆条目：一次完整的任务执行轨迹。"""
+class RuntimeEpisode:
+    """Single runtime task episode."""
 
     episode_id: str
     task_id: str
@@ -392,42 +332,33 @@ class Episode:
         }
 
 
-class EpisodicMemory:
+class RuntimeEpisodeLog:
     """
-    情景记忆：记录跨会话的任务执行轨迹。
+    Current-process task episode log.
 
-    存储：JSON 文件（每 workspace 一个文件）
+    存储：进程内 transient cache；长期存储必须走 PostgreSQL 服务层
     索引：按 topic / status / time 过滤
     """
 
     MAX_EPISODES = 100
 
-    def __init__(self, workspace_id: str, storage_dir: str = ".memory/episodic"):
+    def __init__(self, workspace_id: str, storage_dir: str | None = None):
         self._workspace_id = workspace_id
-        self._storage_path = Path(storage_dir) / f"{workspace_id}.json"
-        self._episodes: list[Episode] = []
+        self._episodes: list[RuntimeEpisode] = []
         self._loaded = False
-        self._current_episode: Episode | None = None
+        self._current_episode: RuntimeEpisode | None = None
 
     def _ensure_loaded(self) -> None:
-        if self._loaded:
-            return
         self._loaded = True
-        if self._storage_path.exists():
-            data = _read_json(str(self._storage_path), {"episodes": []})
-            for raw in data.get("episodes", []):
-                self._episodes.append(Episode(**raw))
 
     def _save(self) -> None:
-        _ensure_dir(str(self._storage_path.parent))
-        data = {"episodes": [e.to_dict() for e in self._episodes[-self.MAX_EPISODES:]]}
-        _write_json(str(self._storage_path), data)
+        return
 
     def start_episode(self, task_id: str, topic: str, metadata: dict | None = None) -> str:
         """开始一个新情景（任务开始时调用）。"""
         self._ensure_loaded()
         episode_id = f"ep_{task_id}_{len(self._episodes)}"
-        episode = Episode(
+        episode = RuntimeEpisode(
             episode_id=episode_id,
             task_id=task_id,
             workspace_id=self._workspace_id,
@@ -461,7 +392,7 @@ class EpisodicMemory:
             "data": stage_data,
         })
 
-    def recent(self, n: int = 5, status: str | None = None) -> list[Episode]:
+    def recent(self, n: int = 5, status: str | None = None) -> list[RuntimeEpisode]:
         """返回最近 n 个情景。"""
         self._ensure_loaded()
         eps = self._episodes[-n:] if n > 0 else self._episodes
@@ -469,7 +400,7 @@ class EpisodicMemory:
             eps = [e for e in eps if e.status == status]
         return eps
 
-    def by_topic(self, topic: str) -> list[Episode]:
+    def by_topic(self, topic: str) -> list[RuntimeEpisode]:
         """按主题搜索情景。"""
         self._ensure_loaded()
         return [e for e in self._episodes if topic.lower() in e.topic.lower()]
@@ -498,26 +429,24 @@ class EpisodicMemory:
         return "\n".join(lines)
 
 
-# ─── PreferenceMemory（偏好记忆）─────────────────────────────────────────────
+# ─── Runtime Preference Store ───────────────────────────────────────────────
 
 
-class PreferenceMemory:
+class RuntimePreferenceStore:
     """
-    偏好记忆：用户显式偏好和历史记录。
+    Current-process user preference cache.
 
-    存储：JSON 文件（简单 key-value）
+    存储：进程内 transient cache；长期存储必须走 PostgreSQL 服务层
     """
 
-    def __init__(self, workspace_id: str, storage_dir: str = ".memory/preference"):
+    def __init__(self, workspace_id: str, storage_dir: str | None = None):
         self._workspace_id = workspace_id
-        self._path = Path(storage_dir) / f"{workspace_id}.json"
-        self._data: dict = _read_json(str(self._path), {})
+        self._data: dict = {}
 
     def set(self, key: str, value: str) -> None:
         if _looks_like_secret(value):
             return
         self._data[key] = {"value": value, "updated_at": time.time()}
-        _write_json(str(self._path), self._data)
 
     def get(self, key: str, default: str = "") -> str:
         item = self._data.get(key)
@@ -539,29 +468,39 @@ class PreferenceMemory:
 
 class MemoryManager:
     """
-    三层 Memory 统一管理器。
+    LangGraph checkpoint-aware runtime memory adapter.
 
-    整合 SensoryMemory / WorkingMemory / SemanticMemory / EpisodicMemory / PreferenceMemory，
-    提供统一的 add / search / build_context / inject 接口。
+    It preserves the existing add/search/build_context interface used by the
+    v2 agents while avoiding custom durable memory stores. The saver is exposed
+    so graph builders can share the same LangGraph checkpoint implementation.
     """
 
-    def __init__(self, workspace_id: str):
+    def __init__(
+        self,
+        workspace_id: str,
+        checkpointer: BaseCheckpointSaver | None = None,
+    ):
         self._ws_id = workspace_id
-        self._sensory = SensoryMemory(workspace_id)
-        self._working = WorkingMemory()
-        self._semantic = SemanticMemory(workspace_id)
-        self._episodic = EpisodicMemory(workspace_id)
-        self._preference = PreferenceMemory(workspace_id)
+        self._checkpointer = checkpointer or get_langgraph_checkpointer(f"memory:{workspace_id}")
+        self._events = RuntimeEventBuffer(workspace_id)
+        self._working = RuntimeWorkingState()
+        self._vectors = RuntimeVectorCache(workspace_id)
+        self._episodes = RuntimeEpisodeLog(workspace_id)
+        self._preferences = RuntimePreferenceStore(workspace_id)
+
+    @property
+    def checkpointer(self) -> BaseCheckpointSaver:
+        return self._checkpointer
 
     # ── 感官记忆 ──────────────────────────────────────────────────────────────
 
     def add_sensory(self, event_type: str, content: str | dict, metadata: dict | None = None) -> str:
         """记录感官事件。"""
-        return self._sensory.add(event_type, content, metadata)
+        return self._events.add(event_type, content, metadata)
 
     def add_tool_output(self, tool_name: str, output: str | dict) -> str:
         """记录工具输出。"""
-        return self._sensory.add_tool_output(tool_name, output)
+        return self._events.add_tool_output(tool_name, output)
 
     # ── 工作记忆 ──────────────────────────────────────────────────────────────
 
@@ -584,33 +523,33 @@ class MemoryManager:
 
     def add_semantic(self, text: str, memory_type: str = "domain_knowledge", metadata: dict | None = None) -> str:
         """添加语义记忆。"""
-        return self._semantic.add(text, memory_type, metadata)
+        return self._vectors.add(text, memory_type, metadata)
 
-    def search_semantic(self, query: str, top_k: int = 5, memory_type: str | None = None) -> list[SemanticEntry]:
+    def search_semantic(self, query: str, top_k: int = 5, memory_type: str | None = None) -> list[RuntimeMemoryEntry]:
         """语义检索。"""
-        return self._semantic.search(query, top_k, memory_type)
+        return self._vectors.search(query, top_k, memory_type)
 
     # ── 情景记忆 ──────────────────────────────────────────────────────────────
 
     def start_episode(self, task_id: str, topic: str, metadata: dict | None = None) -> str:
         """开始新任务情景。"""
-        return self._episodic.start_episode(task_id, topic, metadata)
+        return self._episodes.start_episode(task_id, topic, metadata)
 
     def end_episode(self, status: str, outcome_summary: str, artifacts: list[str] | None = None) -> None:
         """结束当前情景。"""
-        self._episodic.end_episode(status, outcome_summary, artifacts)
+        self._episodes.end_episode(status, outcome_summary, artifacts)
 
     def add_stage(self, stage_name: str, stage_data: dict) -> None:
         """记录情景阶段。"""
-        self._episodic.add_stage(stage_name, stage_data)
+        self._episodes.add_stage(stage_name, stage_data)
 
     # ── 偏好记忆 ──────────────────────────────────────────────────────────────
 
     def set_preference(self, key: str, value: str) -> None:
-        self._preference.set(key, value)
+        self._preferences.set(key, value)
 
     def get_preference(self, key: str, default: str = "") -> str:
-        return self._preference.get(key, default)
+        return self._preferences.get(key, default)
 
     # ── 上下文构建 ────────────────────────────────────────────────────────────
 
@@ -630,16 +569,16 @@ class MemoryManager:
         parts: list[str] = []
 
         if include_preference:
-            pref = self._preference.to_prompt()
+            pref = self._preferences.to_prompt()
             if pref:
                 parts.append(pref)
 
         if topic:
-            sem = self._semantic.to_prompt(query=topic, top_k=max_semantic)
+            sem = self._vectors.to_prompt(query=topic, top_k=max_semantic)
             if sem:
                 parts.append(sem)
 
-        epi = self._episodic.to_prompt(current_topic=topic, n=max_episodes)
+        epi = self._episodes.to_prompt(current_topic=topic, n=max_episodes)
         if epi:
             parts.append(epi)
 
@@ -647,7 +586,7 @@ class MemoryManager:
         if work:
             parts.append(work)
 
-        sens = self._sensory.to_prompt(max_events=max_sensory)
+        sens = self._events.to_prompt(max_events=max_sensory)
         if sens:
             parts.append(sens)
 

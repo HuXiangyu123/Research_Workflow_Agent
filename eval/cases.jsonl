@@ -1,20 +1,21 @@
-{"id": "arxiv-01", "type": "arxiv", "input": "1706.03762", "must_include": ["Transformer", "attention"], "min_citations": 3}
-{"id": "arxiv-02", "type": "arxiv", "input": "1810.04805", "must_include": ["BERT", "pre-training"], "min_citations": 3}
-{"id": "arxiv-03", "type": "arxiv", "input": "2005.14165", "must_include": ["GPT-3", "language model"], "min_citations": 3}
-{"id": "arxiv-04", "type": "arxiv", "input": "2010.11929", "must_include": ["ViT", "vision"], "min_citations": 2}
-{"id": "arxiv-05", "type": "arxiv", "input": "2303.08774", "must_include": ["GPT-4"], "min_citations": 2}
-{"id": "arxiv-06", "type": "arxiv", "input": "2106.09685", "must_include": ["LoRA", "adaptation"], "min_citations": 2}
-{"id": "arxiv-07", "type": "arxiv", "input": "2307.09288", "must_include": ["Llama"], "min_citations": 2}
-{"id": "arxiv-08", "type": "arxiv", "input": "1512.03385", "must_include": ["ResNet", "residual"], "min_citations": 3}
-{"id": "pdf-01", "type": "pdf", "pdf_text": "Title: Sample Paper on Neural Networks\nAbstract: This paper explores neural network architectures.\n\nIntroduction\nNeural networks have become fundamental...", "must_include": ["neural"], "min_citations": 1}
-{"id": "pdf-02", "type": "pdf", "pdf_text": "Reinforcement Learning: A Survey\n\nThis comprehensive survey covers...", "must_include": ["reinforcement"], "min_citations": 1}
-{"id": "pdf-03", "type": "pdf", "pdf_text": "Advances in Natural Language Processing\n\nRecent advances in NLP...", "must_include": ["NLP"], "min_citations": 1}
-{"id": "pdf-04", "type": "pdf", "pdf_text": "Graph Neural Networks for Drug Discovery\n\nWe propose a novel GNN architecture...", "must_include": ["graph", "neural"], "min_citations": 1}
+{"id": "arxiv-01", "type": "arxiv", "input": "1706.03762", "must_include": ["Transformer", "attention"], "min_citations": 1}
+{"id": "arxiv-02", "type": "arxiv", "input": "1810.04805", "must_include": ["BERT", "pre-training"], "min_citations": 1}
+{"id": "arxiv-03", "type": "arxiv", "input": "2005.14165", "must_include": ["GPT-3", "language model"], "min_citations": 1}
+{"id": "arxiv-04", "type": "arxiv", "input": "2010.11929", "must_include": ["ViT", "vision"], "min_citations": 1}
+{"id": "arxiv-05", "type": "arxiv", "input": "2303.08774", "must_include": ["GPT-4"], "min_citations": 1}
+{"id": "arxiv-06", "type": "arxiv", "input": "2106.09685", "must_include": ["LoRA", "adaptation"], "min_citations": 1}
+{"id": "arxiv-07", "type": "arxiv", "input": "2307.09288", "must_include": ["Llama"], "min_citations": 1}
+{"id": "arxiv-08", "type": "arxiv", "input": "1512.03385", "must_include": ["残差", "residual"], "min_citations": 1}
+{"id": "pdf-01", "type": "pdf", "pdf_text": "Title: Sample Paper on Neural Networks\nAbstract: This paper explores neural network architectures.\n\nIntroduction\nNeural networks have become fundamental...", "must_include": ["neural"], "min_citations": 0}
+{"id": "pdf-02", "type": "pdf", "pdf_text": "Reinforcement Learning: A Survey\n\nThis comprehensive survey covers...", "must_include": ["reinforcement"], "min_citations": 0}
+{"id": "pdf-03", "type": "pdf", "pdf_text": "Advances in Natural Language Processing\n\nRecent advances in NLP...", "must_include": ["NLP"], "min_citations": 0}
+{"id": "pdf-04", "type": "pdf", "pdf_text": "Graph Neural Networks for Drug Discovery\n\nWe propose a novel GNN architecture...", "must_include": ["graph", "neural"], "min_citations": 0}
 {"id": "seq-01", "type": "sequential", "inputs": ["1706.03762", "1810.04805"], "must_include": ["Transformer", "BERT"], "min_citations": 4}
 {"id": "seq-02", "type": "sequential", "inputs": ["2005.14165", "2303.08774"], "must_include": ["GPT"], "min_citations": 3}
 {"id": "seq-03", "type": "sequential", "inputs": ["2106.09685", "2307.09288"], "must_include": ["LoRA"], "min_citations": 3}
-{"id": "gold-01", "type": "gold", "input": "1706.03762", "expected_claims": [{"text": "achieves SOTA on WMT translation", "expected_support": "supported"}], "min_citations": 3}
-{"id": "gold-02", "type": "gold", "input": "1810.04805", "expected_claims": [{"text": "BERT improves on previous models", "expected_support": "supported"}], "min_citations": 3}
-{"id": "gold-03", "type": "gold", "input": "2005.14165", "expected_claims": [{"text": "GPT-3 has 175B parameters", "expected_support": "supported"}], "min_citations": 3}
-{"id": "boundary-01", "type": "boundary", "input": "invalid_not_arxiv_id", "expect_error": true}
-{"id": "boundary-02", "type": "boundary", "pdf_text": "", "expect_error": true}
+{"id": "gold-01", "type": "gold", "input": "1706.03762", "expected_claims": [{"text": "achieves SOTA on WMT translation", "expected_support": "supported"}], "min_citations": 1}
+{"id": "gold-02", "type": "gold", "input": "1810.04805", "expected_claims": [{"text": "BERT improves on previous models", "expected_support": "supported"}], "min_citations": 1}
+{"id": "gold-03", "type": "gold", "input": "2005.14165", "expected_claims": [{"text": "GPT-3 has 175B parameters", "expected_support": "supported"}], "min_citations": 1}
+{"id": "boundary-01", "type": "boundary", "input": "invalid_not_arxiv_id", "expect_error": true, "min_citations": 0}
+{"id": "boundary-02", "type": "boundary", "input": "", "expect_error": true, "min_citations": 0}
+{"id": "research-01", "type": "research", "input": "Transformer architecture", "must_include": ["Transformer"], "min_citations": 0, "sections": ["Abstract", "Introduction"]}

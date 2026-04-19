@@ -1,246 +1,221 @@
 # PaperReader Agent — Memory 与状态管理
 
----
+## 1. 先给结论
 
-## 1. 整体 Memory 架构
+如果只讲当前主路径，项目里的“memory / state”应该拆成四层：
 
-### 1.1 三层 Memory 模型
+1. 运行中任务缓存：`src/api/routes/tasks.py::_tasks`
+2. LangGraph checkpoint：`MemorySaver` 或 `PostgresSaver`
+3. Durable API snapshot：`persisted_tasks` / `persisted_reports`
+4. 用户可见 artifacts：`output/workspaces/...`
 
-| 层次 | 存储介质 | 生命周期 | 作用 |
-|------|---------|---------|------|
-| **短期记忆（Working Memory）** | `AgentState` TypedDict | 单任务执行期间 | 节点间传递中间产物 |
-| **工作区持久化（Workspace）** | PostgreSQL JSONB + workspace 文件 | 单任务生命周期 | 快照、报告、chunks |
-| **长期记忆（Long-term）** | `.memory/` 目录（JSON） | 跨任务 | 跨会话语义/情景记忆 |
+不要把它讲成“已经有完整的长期语义记忆系统”。当前更准确的说法是：
 
-### 1.2 Memory 相关文件
+> 运行时有轻量 memory adapter，但 durable 主体仍然是 PostgreSQL snapshots + workspace artifacts。
 
+## 2. 状态层次图
+
+```mermaid
+flowchart TD
+    A[Task execution] --> B[_tasks in memory]
+    A --> C[LangGraph checkpointer]
+    A --> D[PersistedTask / PersistedReport]
+    A --> E[output/workspaces/...]
+    B --> F[SSE]
+    D --> G[/tasks and /tasks/{id}/result]
+    E --> H[artifact preview and replay]
 ```
-src/memory/
-├── __init__.py
-└── manager.py          # MemoryManager — 管理 episodic + semantic memory
 
-.memory/                 (workspace 外）
-├── episodic/           # 情景记忆：每次任务的事件序列
-│   └── ws_{task_id}.json
-├── semantic/           # 语义记忆：跨任务提取的知识
-│   └── ws_{workspace_id}.json
-```
+## 3. 用了什么方法（Use What）
 
----
+### 3.1 运行期缓存
 
-## 2. 短期记忆：AgentState
+- 进程内 `_tasks` 字典
+- 用来支撑当前 task 的快速读写与 SSE
 
-**文件**：`src/research/graph/state.py`
+### 3.2 图级状态持久化
+
+- LangGraph `BaseCheckpointSaver`
+- 当前支持 `MemorySaver` 与 `PostgresSaver`
+
+### 3.3 API 级 durable persistence
+
+- SQLAlchemy + PostgreSQL
+- `PersistedTask`
+- `PersistedReport`
+
+### 3.4 可回放工件层
+
+- `output/workspaces/<workspace_id>/tasks/<task_id>/...`
+
+## 4. 当前项目怎么做（How To Do）
+
+### 4.1 运行中 `_tasks`
 
 ```python
-from typing import TypedDict, Annotated
-import operator
+router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-class AgentState(TypedDict):
-    """Research Graph 的运行时状态载体"""
+_tasks: dict[str, TaskRecord] = {}
 
-    # 任务标识
-    task_id: str
-    workspace_id: str | None
-
-    # 输入输出
-    raw_input: str
-    brief: ResearchBrief | None
-    search_plan: SearchPlan | None
-    rag_result: RagResult | None
-
-    # 中间产物
-    paper_cards: list[PaperCard]
-    draft_report: DraftReport | None
-    resolved_report: DraftReport | None
-    verified_report: DraftReport | None
-    final_report: FinalReport | None
-    review_feedback: ReviewFeedback | None
-
-    # 量化指标（累加）
-    tokens_used: Annotated[dict, operator.add]
-    """每个节点的 token 消耗，operator.add 自动合并"""
-
-    # 警告列表（累加）
-    warnings: Annotated[list, operator.add]
-    """每个节点产生的 warnings，operator.add 自动追加"""
-
-    # 运行时事件
-    node_events: list[dict]
-    """SSE 事件列表，用于前端可视化"""
+def _get_task_record(task_id: str) -> TaskRecord | None:
+    task = _tasks.get(task_id)
+    if task:
+        return task
+    task = load_task_snapshot(task_id)
+    if task:
+        _tasks[task.task_id] = task
+    return task
 ```
 
-**关键设计**：
-- `Annotated[dict, operator.add]` 和 `Annotated[list, operator.add]`：每次节点返回 patch 时，LangGraph 自动将返回值与当前状态合并
-- 所有字段显式 `None | Type` 类型标注：类型安全
+代码位置：`src/api/routes/tasks.py`
 
----
+它的定位是：
 
-## 3. 工作区持久化：PostgreSQL + TaskSnapshot
+- 当前进程内缓存
+- 低延迟支撑 SSE
+- 不是 durable source of truth
 
-**文件**：`src/db/task_persistence.py`
+### 4.2 checkpoint
 
 ```python
-class TaskPersistence:
-    """任务持久化服务"""
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import MemorySaver
 
-    async def upsert_task_snapshot(
-        self,
-        task_id: str,
-        stage: str,
-        state_snapshot: dict,
-    ) -> None:
-        """
-        任务快照：完整 AgentState JSONB 持久化
+def get_langgraph_checkpointer(namespace: str = "default") -> BaseCheckpointSaver:
+    backend = os.getenv("LANGGRAPH_CHECKPOINT_BACKEND", "memory").strip().lower()
+    if backend in {"", "memory", "inmemory", "in_memory"}:
+        key = ("memory", namespace, "")
+        if key not in _CHECKPOINTERS:
+            _CHECKPOINTERS[key] = MemorySaver()
+        return _CHECKPOINTERS[key]
 
-        ON CONFLICT DO UPDATE：任务重跑时覆盖而非重复
-        """
-        async with get_async_session() as session:
-            snapshot = TaskSnapshot(
-                task_id=task_id,
-                stage=stage,
-                state_snapshot=state_snapshot,  # JSONB 列
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-            )
-            # SQLAlchemy upsert
-            stmt = insert(TaskSnapshot).values(**snapshot.__dict__)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["task_id"],
-                set_={
-                    "stage": stmt.excluded.stage,
-                    "state_snapshot": stmt.excluded.state_snapshot,
-                    "updated_at": datetime.utcnow(),
-                },
-            )
-            await session.execute(stmt)
-            await session.commit()
+    if backend == "postgres":
+        from langgraph.checkpoint.postgres import PostgresSaver
+        context = PostgresSaver.from_conn_string(database_url)
 ```
 
-**TaskSnapshot 模型**（`src/db/models.py`）：
+代码位置：`src/agent/checkpointing.py`
+
+这层的语义是：
+
+- 图运行时状态
+- 可切换 memory / postgres backend
+- 符合 LangGraph 规范
+
+### 4.3 数据库 snapshot
 
 ```python
-class TaskSnapshot(Base):
-    __tablename__ = "task_snapshots"
+class PersistedTask(Base):
+    __tablename__ = "persisted_tasks"
 
-    task_id: Mapped[str] = Column(String, primary_key=True)
-    workspace_id: Mapped[str] = Column(String, nullable=True)
-    stage: Mapped[str] = Column(String, nullable=False)
-    # JSONB：存储完整 AgentState，无需预定义 schema
-    state_snapshot: Mapped[dict] = Column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    task_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    input_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_value: Mapped[str] = mapped_column(Text, nullable=False)
+    report_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 ```
-
----
-
-## 4. 长期记忆：.memory 目录
-
-**文件**：`src/memory/manager.py`
 
 ```python
-class MemoryManager:
-    """跨任务记忆管理器"""
+def upsert_task_snapshot(task: TaskRecord) -> bool:
+    if not _ensure_tables():
+        return False
 
-    def __init__(self, memory_dir: Path = Path(".memory")):
-        self.memory_dir = memory_dir
-        self.episodic_dir = memory_dir / "episodic"
-        self.semantic_dir = memory_dir / "semantic"
-
-    async def store_episodic(self, task_id: str, events: list[dict]) -> None:
-        """存储情景记忆：任务执行的事件序列"""
-        path = self.episodic_dir / f"ws_{task_id}.json"
-        await self._write_json(path, {
-            "task_id": task_id,
-            "events": events,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
-
-    async def store_semantic(self, workspace_id: str, knowledge: dict) -> None:
-        """存储语义记忆：跨任务提取的知识"""
-        path = self.semantic_dir / f"ws_{workspace_id}.json"
-        await self._write_json(path, {
-            "workspace_id": workspace_id,
-            "knowledge": knowledge,
-            "updated_at": datetime.utcnow().isoformat(),
-        })
-
-    async def retrieve_semantic(self, workspace_id: str, query: str) -> list[dict]:
-        """基于查询检索语义记忆"""
-        path = self.semantic_dir / f"ws_{workspace_id}.json"
-        if not path.exists():
-            return []
-
-        data = await self._read_json(path)
-        # 简单关键词匹配（未来可升级为向量检索）
-        return [k for k in data.get("knowledge", []) if query.lower() in str(k).lower()]
+    payload = {
+        "task_id": task.task_id,
+        "status": task.status.value,
+        "input_type": task.input_type,
+        "input_value": task.input_value,
+        "report_mode": task.report_mode,
+        "source_type": task.source_type,
+        "workspace_id": task.workspace_id,
+        "result_markdown": task.result_markdown,
+        "brief": _json_safe(task.brief),
+        "search_plan": _json_safe(task.search_plan),
+    }
 ```
 
----
+代码位置：`src/db/task_persistence.py`
 
-## 5. State 流转图
+### 4.4 workspace artifacts
 
-```
-用户输入 (raw_input)
-  │
-  ▼
-clarify_node(state={}) ──────────────────────────┐
-  │ 返回 {"brief": ResearchBrief}                 │
-  ▼                                            │
-search_plan_node(state={brief}) ─────────────┐   │
-  │ 返回 {"search_plan": SearchPlan}          │   │
-  ▼                                          │   │
-search_node(state={search_plan}) ──────────┐ │   │
-  │ 返回 {"rag_result": RagResult}           │ │   │
-  ▼                                          │ │   │
-extract_node(state={rag_result}) ──────────┐ │ │   │
-  │ 返回 {"paper_cards": list[PaperCard]}   │ │ │   │
-  ▼                                          │ │ │   │
-draft_node(state={paper_cards}) ───────────┐ │ │ │   │
-  │ 返回 {"draft_report": DraftReport}      │ │ │ │   │
-  ▼                                          │ │ │ │   │
-review_node(state={draft_report}) ──────────┐ │ │ │ │   │
-  │ 返回 {"final_report": FinalReport,      │ │ │ │ │   │
-  │       "review_feedback": ReviewFeedback} │ │ │ │ │   │
-  ▼                                          │ │ │ │ │   │
-persist_artifacts_node(state={final_report}) ─┘ │ │ │ │   │
-  │ 写入 PostgreSQL Snapshot                 │ │ │ │ │   │
-  ▼                                            ▼ ▼ ▼ ▼ ▼
+```python
+def get_workspace_path(task_id: str, workspace_id: str | None = None) -> Path:
+    if workspace_id:
+        return get_workspace_root(workspace_id) / "tasks" / task_id
+    return OUTPUT_ROOT / task_id
 
-tokens_used: {"clarify": 200, "search_plan": 150, ...}  ← operator.add 累加
-warnings: ["arXiv API 超时", "LLM JSON 解析失败"]      ← operator.add 累加
+def write_report(task_id: str, report_markdown: str, *, workspace_id: str | None = None) -> Path:
+    workspace = get_workspace_path(task_id, workspace_id=workspace_id)
+    path = workspace / "report.md"
+    path.write_text(report_markdown, encoding="utf-8")
 ```
 
----
+代码位置：`src/agent/output_workspace.py`
 
-## 6. 状态持久化 vs. 内存状态对比
+## 5. `src/memory/manager.py` 现在应该怎么理解
 
-| 维度 | PostgreSQL Snapshot | In-memory dict | .memory/ JSON |
-|------|-------------------|----------------|---------------|
-| **用途** | 任务快照恢复 | 运行时传递 | 跨任务记忆 |
-| **生命周期** | 持久 | 单次任务 | 持久 |
-| **查询能力** | 可 SQL 查询 | 无 | 手动读取 |
-| **Schema** | 预定义 ORM | TypedDict | 灵活 JSON |
-| **恢复速度** | 慢（需 DB 连接） | 快 | 中等 |
+这个文件还存在，但现在应当把它定义为：
 
----
+- 轻量 runtime memory adapter
+- 兼容层
+- 进程内工作记忆与事件缓冲
+- 不是 durable 主存储
 
-## 7. 优点与局限
+它自己也在文件头写明了这一点：
 
-### 7.1 优点
+```python
+"""Agent memory adapter backed by LangGraph checkpoint interfaces.
 
-| 优点 | 说明 |
-|------|------|
-| **JSONB 灵活性** | AgentState 结构变化时无需 ALTER TABLE，schema-free |
-| **累加语义** | `operator.add` 确保 tokens_used 和 warnings 自然累加 |
-| **Upsert 语义** | 任务重跑时覆盖快照，避免重复记录 |
-| **三层分离** | 短期/工作区/长期分离，各司其职 |
+The runtime-facing API is intentionally small and transient.
+Earlier versions persisted semantic/episodic/preference memory as JSON files
+under `.memory`; that violates the current project rules.
+"""
+```
 
-### 7.2 局限
+代码位置：`src/memory/manager.py`
 
-| 局限 | 影响 |
-|------|------|
-| **内存 dict 无持久化** | `_tasks` in-memory dict 随进程消失 |
-| **.memory/ 未参与主流程** | 跨任务记忆未被工作流使用 |
-| **向量检索未启用** | 跨任务语义检索仍用关键词匹配 |
-| **无记忆压缩** | 长期记忆无限增长，无淘汰策略 |
+### 其中仍然有用的部分
+
+```python
+class RuntimeEventBuffer:
+    MAX_EVENTS = 50
+
+    def add(self, event_type: str, content: str | dict, metadata: dict | None = None) -> str:
+        if _looks_like_secret(str(content)):
+            return ""
+        event_id = f"se_{self._workspace_id}_{self._event_counter}"
+        self._event_counter += 1
+```
+
+```python
+class RuntimeWorkingState:
+    messages: list[dict] = field(default_factory=list)
+    agent_state: dict = field(default_factory=dict)
+    context_budget: int = 6000
+    summary: str = ""
+```
+
+这些部分更像：
+
+- 当前会话工作记忆
+- prompt 注入辅助
+- 运行时缓存
+
+## 6. 当前这套状态体系的优点
+
+- `_tasks` 让运行态交互快
+- checkpoint 让图状态管理符合 LangGraph 规范
+- PostgreSQL 让历史任务可恢复
+- workspace 让用户能真实看到中间产物
+
+## 7. 面试时怎么回答“memory 怎么做的”
+
+不要直接说“我们有长期记忆系统”，推荐按下面回答：
+
+1. 运行中任务状态放在内存 `_tasks`。
+2. 图级状态由 LangGraph checkpointer 管。
+3. durable snapshot 和 final report 放 PostgreSQL。
+4. 用户可见工件放 workspace 文件夹。
+5. `src/memory/manager.py` 目前主要是 transient runtime memory adapter，不是长期主存储。

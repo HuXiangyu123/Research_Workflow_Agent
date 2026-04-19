@@ -87,6 +87,7 @@ def test_run_agent_hydrates_existing_task_state():
     assert node_name == "review"
     assert state["workspace_id"] == "ws_real_123"
     assert state["draft_report"] == task.draft_report
+    assert state["interaction_mode"] == "interactive"
     assert inputs == {}
 
 

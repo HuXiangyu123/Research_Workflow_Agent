@@ -6,6 +6,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 
+from src.agent.report_markdown import render_report_markdown
 from src.agent.prompts import LITERATURE_REPORT_SYSTEM_PROMPT
 
 
@@ -23,27 +24,12 @@ def _last_ai_text(state: dict[str, Any]) -> str:
 
 def _final_report_to_markdown(final_report) -> str:
     """Convert a FinalReport to markdown string."""
-    lines: list[str] = []
-    for section_name, content in final_report.sections.items():
-        lines.append(f"## {section_name}\n\n{content}\n")
-
-    if final_report.citations:
-        lines.append("## 引用\n")
-        for c in final_report.citations:
-            lines.append(f"- {c.label} {c.url} — {c.reason}")
-
-    if final_report.grounding_stats:
-        gs = final_report.grounding_stats
-        lines.append("\n## 引用可信度\n")
-        if gs.total_claims > 0:
-            lines.append(f"- Grounded: {gs.grounded}/{gs.total_claims}")
-            lines.append(f"- Partial: {gs.partial}/{gs.total_claims}")
-            lines.append(f"- Ungrounded: {gs.ungrounded}/{gs.total_claims}")
-            lines.append(f"- Abstained: {gs.abstained}/{gs.total_claims}")
-        lines.append(f"- Tier A 来源占比: {round(gs.tier_a_ratio * 100)}%")
-        lines.append(f"- 报告置信度: {final_report.report_confidence}")
-
-    return "\n".join(lines)
+    return render_report_markdown(
+        sections=final_report.sections,
+        citations=final_report.citations,
+        grounding_stats=final_report.grounding_stats,
+        report_confidence=final_report.report_confidence,
+    )
 
 
 def _build_initial_state(
@@ -85,6 +71,7 @@ def generate_literature_report(
     callbacks: list[BaseCallbackHandler] | None = None,
     extra_system_context: str | None = None,
     chat_history: list[Any] | None = None,
+    task_id: str | None = None,
 ) -> str:
     """
     Generate a literature report using the new StateGraph pipeline.
@@ -92,6 +79,8 @@ def generate_literature_report(
     Backward compatible: *agent* is accepted but ignored when the new graph
     is available.  Falls back to the old ReAct path only for multi-turn chat
     (when *chat_history* is provided together with an *agent*).
+
+    If *task_id* is provided, the report is persisted to output/<task_id>/report.md.
     """
     # Multi-turn chat: keep using the old agent (the graph is single-shot)
     if chat_history and agent:
@@ -122,6 +111,11 @@ def generate_literature_report(
 
     final = result.get("final_report")
     if final:
-        return _final_report_to_markdown(final)
+        report_md = _final_report_to_markdown(final)
+        # Persist report if task_id provided
+        if task_id:
+            from src.agent.output_workspace import write_report
+            write_report(task_id, report_md)
+        return report_md
 
     return "Error: No report generated."

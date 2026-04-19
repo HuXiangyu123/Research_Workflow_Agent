@@ -7,27 +7,24 @@ from eval.layers.hard_rules import (
     run_layer1,
 )
 
-GOOD_REPORT = """## 标题
+GOOD_REPORT = """# Attention Is All You Need
 
-Attention Is All You Need
+## Abstract and Motivation
 
-## 核心贡献
+Transformer architecture overview
 
-Transformer architecture
-
-## 方法概述
-
+## Methods
 Self-attention mechanism
 
-## 关键实验
+## Experiments
 
 BLEU score improvements
 
-## 局限性
+## Discussion and Future Directions
 
 High compute cost
 
-## 引用
+## References
 
 - [1] https://arxiv.org/abs/1706.03762 — original paper
 - [2] https://doi.org/10.1234 — related work
@@ -42,7 +39,7 @@ def test_structure_complete():
 
 
 def test_structure_missing():
-    partial = "## 标题\n\nTest\n\n## 核心贡献\n\nContrib"
+    partial = "# Test\n\n## Abstract and Motivation\n\nContrib"
     result = check_structure(partial)
     assert result["pass"] is False
     assert len(result["missing"]) > 0
@@ -55,7 +52,7 @@ def test_citation_format_good():
 
 
 def test_citation_format_missing():
-    result = check_citation_format("## 标题\n\nNo citations here")
+    result = check_citation_format("# Title\n\nNo citations here")
     assert result["pass"] is False
 
 
@@ -105,5 +102,5 @@ def test_run_layer1_error_case():
 
 def test_run_layer1_error_case_not_error():
     case = {"expect_error": True}
-    result = run_layer1("## 标题\n\nSome normal report", case)
+    result = run_layer1("# Title\n\nSome normal report", case)
     assert result["pass"] is False
